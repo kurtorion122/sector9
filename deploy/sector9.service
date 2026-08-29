@@ -1,0 +1,17 @@
+[Unit]
+Description=SEKTOR-9 game server (HTTP + multiplayer WebSocket)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/sector9
+Environment=PORT=3000
+# Чтобы отдавать игру на порту 80 (адрес без :3000), закомментируйте строку выше
+# и раскомментируйте эту (сервис стартует от root — права на порт 80 есть):
+# Environment=PORT=80
+ExecStart=/usr/bin/env node /opt/sector9/serve.cjs
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
