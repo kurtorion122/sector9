@@ -1,5 +1,8 @@
 /* Shared types & static data for engine, net, UI. */
 
+import type { StatBuffId } from "./buffs";
+import type { UbId } from "./underbarrel";
+
 /* ---------------- weapons ---------------- */
 
 export interface WeaponDef {
@@ -21,26 +24,28 @@ export interface WeaponDef {
 export const WEAPONS: WeaponDef[] = [
   { name: "ПМ «ГРОМ»", dmg: 26, rate: 0.26, speed: 980, spread: 0.035, pellets: 1, magSize: 12, reload: 0.85, cap: 999999, startReserve: 999999, kick: 3, len: 16, range: 1050 },
   { name: "«ВЕПРЬ-12»", dmg: 13, rate: 0.82, speed: 830, spread: 0.3, pellets: 7, magSize: 6, reload: 1.8, cap: 48, startReserve: 24, kick: 9, len: 22, range: 700 },
-  { name: "«ШКВАЛ»", dmg: 13, rate: 0.082, speed: 1040, spread: 0.1, pellets: 1, magSize: 34, reload: 1.5, cap: 204, startReserve: 102, kick: 2.2, len: 20, range: 1000 },
+  { name: "«ШКВАЛ»", dmg: 13, rate: 0.0713, speed: 1040, spread: 0.1, pellets: 1, magSize: 34, reload: 1.5, cap: 204, startReserve: 102, kick: 2.2, len: 20, range: 1000 },
   { name: "«ФИЛИН»", dmg: 52, rate: 0.58, speed: 1560, spread: 0.014, pellets: 1, magSize: 8, reload: 1.6, cap: 64, startReserve: 32, kick: 6, len: 26, range: 1400 },
 ];
 
 export interface UpgradeDef { label: string; desc: string; }
 export const UPGRADES: UpgradeDef[] = [
-  { label: "КАЛИБР+", desc: "урон ×1.7 · темп ниже · разброс выше" },
-  { label: "ЧОК", desc: "разброс ×0.45 · дальность ниже" },
+  { label: "КАЛИБР+", desc: "урон ×1.7 · темп +25% · разброс выше" },
+  { label: "ЧОК", desc: "разброс ×0.7 · дальность ×0.6 · точный" },
   { label: "МАГАЗИН+", desc: "магазин 50 · темп выше · урон +2" },
-  { label: "ОПТИКА+", desc: "урон ×2 · лазер · темп ниже" },
+  { label: "ОПТИКА+", desc: "урон ×2 · лазер · прошивает 2 врагов" },
 ];
 
-export function weaponStats(wi: number, upgraded: boolean) {
+export interface WeaponStats extends WeaponDef { pierce: number; }
+
+export function weaponStats(wi: number, upgraded: boolean): WeaponStats {
   const w = WEAPONS[wi];
-  const s = { ...w };
+  const s: WeaponStats = { ...w, pierce: 0 };
   if (!upgraded) return s;
-  if (wi === 0) { s.dmg = Math.round(w.dmg * 1.7); s.rate = w.rate * 1.35; s.spread = w.spread * 1.8; }
-  else if (wi === 1) { s.spread = w.spread * 0.45; s.range = w.range * 0.6; }
+  if (wi === 0) { s.dmg = Math.round(w.dmg * 1.7); s.rate = w.rate / 1.25; s.spread = w.spread * 1.8; }
+  else if (wi === 1) { s.spread = w.spread * 0.7; s.range = w.range * 0.6; }
   else if (wi === 2) { s.magSize = 50; s.rate = w.rate * 0.82; s.dmg = w.dmg + 2; }
-  else if (wi === 3) { s.dmg = w.dmg * 2; s.rate = w.rate * 1.3; }
+  else if (wi === 3) { s.dmg = w.dmg * 2; s.rate = w.rate * 1.3; s.pierce = 2; }
   return s;
 }
 
@@ -79,7 +84,7 @@ export const BOSSES: BossDef[] = [
   { name: "МОЛЬХ", hp: 3000, speed: 66, r: 38, score: 4000, weapon: 2, weak: 0, aura: "vortex", auraR: 250 },
 ];
 
-/* ---------------- buffs & debuffs ---------------- */
+/* ---------------- buffs & debuffs (временные, из ящика-сюрприза) ---------------- */
 
 export type BuffKind = "firerate" | "precision" | "swift" | "invuln";
 export interface BuffDef { name: string; dur: number; color: string; }
@@ -103,9 +108,10 @@ export const DEBUFF_KINDS: DebuffKind[] = ["foeHp", "foeDmg", "foeSpd", "still"]
 
 /* ---------------- pickups ---------------- */
 
-/** 0 medkit · 1 ammo · 2 weapon crate · 3 armor · 4 buff · 5 upgrade kit
- *  6 surprise crate · 7 spray bonus · 8 rocket bonus */
-export type PickupKind = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+/** 0 medkit · 1 ammo · 2 weapon crate · 3 armor · 4 timed buff · 5 upgrade kit
+ *  6 surprise crate · 7 spray bonus · 8 rocket bonus
+ *  9 passive stat buff (buff=StatBuffId) · 10 underbarrel (ub=UbId) */
+export type PickupKind = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 
 /* ---------------- players ---------------- */
 
@@ -118,6 +124,9 @@ export interface PlayerSnap {
   dead: boolean; reload: number;
   buffs: BuffKind[]; still: number;
   mag: number; reserve: number;
+  stacks: [string, number][];
+  ubMask: number; ubIdx: number; ubCool: number[];
+  ubFlame: number; ubCold: number;
 }
 
 export interface BotSnap {
@@ -125,21 +134,26 @@ export interface BotSnap {
   x: number; y: number; hp: number; maxHp: number; r: number;
   dir: number; state: number; flash: number; weak: number; aura: string; spawnT: number;
   seenX: number; seenY: number;
+  burn: boolean; slow: boolean;
 }
 
 export interface BulletSnap {
   id: number; x: number; y: number; px: number; py: number;
-  friendly: boolean; kind: number; rocket: boolean;
+  friendly: boolean; kind: number; rocket: boolean; crit: boolean;
 }
 
 export interface PickupSnap {
   id: number; kind: PickupKind; wi: number; x: number; y: number; t: number;
+  buff?: StatBuffId; ub?: UbId;
 }
+
+export interface GrenadeSnap { x: number; y: number; k: number; }
 
 export interface Snap {
   time: number; wave: number; waveActive: boolean; score: number;
   mapId: number; seed: number;
   players: PlayerSnap[]; bots: BotSnap[]; bullets: BulletSnap[]; pickups: PickupSnap[];
+  grenades: GrenadeSnap[];
   foeMods: { hp: number; dmg: number; spd: number };
 }
 
@@ -153,7 +167,7 @@ export type Msg =
   | { t: "room"; code: string; you: number; host: number; players: { id: number; name: string }[] }
   | { t: "err"; msg: string }
   | { t: "begin"; seed: number; players: { id: number; name: string }[]; host: number; you: number }
-  | { t: "in"; from?: number; x: number; y: number; aim: number; fire: boolean; weapon: number; reloadSeq: number }
+  | { t: "in"; from?: number; x: number; y: number; aim: number; fire: boolean; weapon: number; reloadSeq: number; ub: number; rmb: number }
   | { t: "snap"; s: Snap }
   | { t: "fx"; ev: FxEvent[] }
   | { t: "banner"; title: string; sub: string }
@@ -167,4 +181,6 @@ export type FxEvent =
   | { k: "float"; x: number; y: number; txt: string; color: string; size: number }
   | { k: "shake"; v: number }
   | { k: "snd"; id: string; dist: number }
-  | { k: "decal"; x: number; y: number };
+  | { k: "decal"; x: number; y: number }
+  | { k: "zap"; pts: { x: number; y: number }[] }
+  | { k: "vamp"; x: number; y: number };

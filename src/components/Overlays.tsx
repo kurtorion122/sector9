@@ -1,5 +1,6 @@
 import { RefObject } from "react";
 import { HudData, Phase } from "../game/engine";
+import { RARITY_COLORS } from "../game/buffs";
 import { BUFFS, DEBUFFS, PLAYER_COLORS, UPGRADES } from "../game/defs";
 
 const fmtTime = (t: number) => {
@@ -63,6 +64,7 @@ export function Hud({
     slots: [0, 1, 2, 3].map((i) => ({ name: "", mag: 0, reserve: 0, reload: -1, owned: i === 0, infinite: i === 0, upgraded: false })),
     dash: 1, time: 0,
     buffs: [], foeMods: { hp: 1, dmg: 1, spd: 1 }, still: 0, boss: null, players: [], meDead: false, netMode: "solo",
+    stats: [], ubs: [], ubIdx: 0,
   };
   const visible = (phase === "playing" || phase === "paused") && hudIn !== null;
   const lowHp = hud.hp < 32;
@@ -132,6 +134,18 @@ export function Hud({
             {hud.foeMods.hp > 1 && <FoeChip label="ВРАГИ КРЕПЧЕ" color={DEBUFFS.foeHp.color} />}
             {hud.foeMods.dmg > 1 && <FoeChip label="ВРАГИ ЗЛЕЕ" color={DEBUFFS.foeDmg.color} />}
             {hud.foeMods.spd > 1 && <FoeChip label="ВРАГИ БЫСТРЕЕ" color={DEBUFFS.foeSpd.color} />}
+          </div>
+        )}
+        {hud.stats.length > 0 && (
+          <div className="panel px-3 py-2 flex flex-col gap-1">
+            <div className="font-display text-[9px] tracking-[0.24em] text-[#7fae72] mb-0.5">МОДИФИКАЦИИ</div>
+            {hud.stats.map((s) => (
+              <div key={s.id} className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: RARITY_COLORS[s.rarity], boxShadow: `0 0 6px ${RARITY_COLORS[s.rarity]}` }} />
+                <span className="font-display text-[10px] tracking-wider" style={{ color: RARITY_COLORS[s.rarity] }}>{s.name}</span>
+                <span className="ml-auto text-[10px] text-[#9dbb95] tabular-nums">{s.val}</span>
+              </div>
+            ))}
           </div>
         )}
         {hud.players.length > 1 && (
@@ -249,6 +263,39 @@ export function Hud({
           );
         })}
       </div>
+
+      {/* bottom-right: underbarrel slots */}
+      {hud.ubs.some((u) => u.owned) && (
+        <div className="absolute bottom-4 right-4 flex flex-col items-end gap-1.5">
+          <div className="flex gap-1.5">
+            {hud.ubs.map((u, i) => {
+              const active = u.active && u.owned;
+              return (
+                <div
+                  key={i}
+                  title={u.owned ? `${u.name} — ${u.desc}` : `${u.name} — не найдено`}
+                  className={`relative w-[64px] px-1.5 py-1.5 text-center panel overflow-hidden transition-all duration-150 ${
+                    active ? "panel-amber -translate-y-1" : u.owned ? "opacity-80" : "opacity-30"
+                  }`}
+                >
+                  <div className={`font-display text-[10px] tracking-widest ${active ? "text-[#ffb020]" : "text-[#7fae72]"}`}>{u.short}</div>
+                  {u.owned && (
+                    <div className="h-[3px] bg-black/70 mt-1 overflow-hidden">
+                      <div
+                        className={`h-full ${u.cool > 0 ? "bg-[#ff6a2e]" : "bg-[#a8ff3e]"}`}
+                        style={{ width: `${Math.round((1 - u.cool) * 100)}%`, transition: "width 100ms linear" }}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="text-[9px] text-[#5c7d5a] tracking-wider flex items-center gap-1">
+            <span className="kbd">ПКМ</span> выстрел <span className="kbd">Q</span> смена
+          </div>
+        </div>
+      )}
 
       {/* fallen notice (MP spectator) */}
       {phase === "playing" && hud.meDead && (
@@ -375,6 +422,8 @@ export function StartScreen({ onStart, onMulti, best }: { onStart: () => void; o
               <div className="font-display text-[10px] tracking-[0.3em] text-[#7fae72] mb-2">УПРАВЛЕНИЕ</div>
               <ControlRow keys={["W", "A", "S", "D"]} label="передвижение" />
               <ControlRow keys={["МЫШЬ"]} label="прицел · ЛКМ — огонь" />
+              <ControlRow keys={["ПКМ"]} label="подствольное оружие" />
+              <ControlRow keys={["Q"]} label="смена подствола" />
               <ControlRow keys={["SHIFT"]} label="рывок (кулдаун 2 с)" />
               <ControlRow keys={["R"]} label="перезарядка" />
               <ControlRow keys={["1", "4"]} label="смена оружия / колесо" />

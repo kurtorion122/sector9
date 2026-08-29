@@ -9,6 +9,12 @@ import {
   Snap, UPGRADES, WEAPONS, weaponStats,
 } from "./defs";
 import { NetClient } from "./net";
+import {
+  RARITY_COLORS, STAT_BUFFS, StatBuffId, buffDef, buffDescribe, computeStats,
+  DerivedStats, drawBuffGlyph, emptyStacks, rollBuffDrops, weaponDropChance,
+} from "./buffs";
+import { UNDERBARRELS, UB_DROP_CHANCE, UbId, pickUbDrop, ubPoolForWave } from "./underbarrel";
+import { angleOff, lightningPath, nearestOther, rollCrit } from "./mechanics";
 
 export type Phase = "menu" | "playing" | "paused" | "over";
 
@@ -27,6 +33,9 @@ export interface HudData {
   players: { name: string; hp: number; dead: boolean; colorIdx: number; me: boolean }[];
   meDead: boolean;
   netMode: string;
+  stats: { id: string; name: string; val: string; rarity: number }[];
+  ubs: { name: string; short: string; desc: string; owned: boolean; cool: number; active: boolean }[];
+  ubIdx: number;
 }
 
 interface Callbacks {
@@ -53,6 +62,18 @@ interface PlayerEnt {
   stillT: number; stillAcc: number; prevX: number; prevY: number;
   sprayT: number; sprayCool: number;
   fireHeld: boolean; reloadSeqSeen: number;
+  // пассивные коллектиблы и подстволы
+  stacks: Record<StatBuffId, number>;
+  stats: DerivedStats;
+  ubOwned: boolean[];
+  ubIdx: number;
+  ubCool: number[];
+  ubFlame: number;      // оставшееся время струи огнемёта
+  ubCold: number;       // оставшееся время конуса холода
+  flameAcc: number;     // аккумулятор звука огнемёта
+  rmbSeq: number;       // счётчик нажатий ПКМ (отправляется хосту)
+  rmbSeen: number;      // счётчик ПКМ, уже виденный хостом
+  ubQueued: boolean;    // запрос на выстрел подствола (от сети)
 }
 
 interface Bot {
@@ -64,6 +85,9 @@ interface Bot {
   cool: number; strafe: number; strafeT: number;
   flash: number; spawnT: number; lunge: number;
   weak: number; aura: AuraKind | ""; auraR: number;
+  burn: number; burnDps: number; burnSrc: number;  // DoT горения
+  slow: number;                                    // замедление конусом холода
+  lastSrc: number;                                 // кто нанёс последний урон (для вампиризма)
 }
 
 interface Bullet {
@@ -71,13 +95,19 @@ interface Bullet {
   vx: number; vy: number; dmg: number; friendly: boolean; life: number;
   kind: number; owner: number;
   rocket: boolean; targetId: number;
+  pierce?: number;   // сколько врагов прошивает насквозь
+  crit?: boolean;    // критический снаряд
+  hitIds?: number[]; // уже задетые враги (для прошивания)
 }
 interface Particle { x: number; y: number; vx: number; vy: number; life: number; max: number; size: number; color: string; drag: number; }
 interface Floater { x: number; y: number; txt: string; color: string; t: number; max: number; size: number; }
 interface Flash { x: number; y: number; r: number; t: number; max: number; color: string; }
 interface Hitmark { x: number; y: number; t: number; big: boolean; }
-interface Pickup { id: number; kind: PickupKind; wi: number; x: number; y: number; t: number; visible: boolean; }
+interface Pickup { id: number; kind: PickupKind; wi: number; x: number; y: number; t: number; visible: boolean; buff?: StatBuffId; ub?: UbId; }
 interface PendingSpawn { x: number; y: number; t: number; kind: number; boss: number; }
+interface Grenade { x: number; y: number; tx: number; ty: number; t: number; dur: number; src: number; done?: boolean; }
+interface Lightning { pts: { x: number; y: number }[]; t: number; max: number; }
+interface Vamp { x: number; y: number; t: number; }
 
 const TAU = Math.PI * 2;
 const FOV_HALF = 0.95;
@@ -147,6 +177,11 @@ export class Game {
   private hitmarks: Hitmark[] = [];
   private pickups: Pickup[] = [];
   private pending: PendingSpawn[] = [];
+  private grenades: Grenade[] = [];
+  private grenadePos: { x: number; y: number; k: number }[] = [];
+  private lightnings: Lightning[] = [];
+  private vamps: Vamp[] = [];
+  private rmbQueued = false; // ПКМ локального игрока (хост/соло)
 
   private wave = 0;
   private betweenT = 0;
@@ -234,7 +269,7 @@ export class Game {
     }
   }
 
-  private handleIn(m: { from?: number; x: number; y: number; aim: number; fire: boolean; weapon: number; reloadSeq: number }) {
+  private handleIn(m: { from?: number; x: number; y: number; aim: number; fire: boolean; weapon: number; reloadSeq: number; ub: number; rmb: number }) {
     const ent = this.players.find((p) => p.id === m.from);
     if (!ent) return;
     ent.x = clamp(m.x, ent.r, MAP_W - ent.r);
@@ -245,6 +280,11 @@ export class Game {
     if (m.reloadSeq > ent.reloadSeqSeen) {
       ent.reloadSeqSeen = m.reloadSeq;
       this.startReloadEnt(ent);
+    }
+    ent.ubIdx = m.ub;
+    if (m.rmb > ent.rmbSeen) {
+      ent.rmbSeen = m.rmb;
+      ent.ubQueued = true;
     }
   }
 
@@ -271,6 +311,10 @@ export class Game {
       case "shake": this.shake = Math.min(24, this.shake + e.v); break;
       case "decal": this.decalBlood(e.x, e.y); break;
       case "snd": this.playSndId(e.id, e.dist); break;
+      case "zap": this.lightnings.push({ pts: e.pts, t: 0.2, max: 0.2 }); break;
+      case "vamp":
+        for (let i = 0; i < 5; i++) this.vamps.push({ x: e.x + (Math.random() - 0.5) * 20, y: e.y + (Math.random() - 0.5) * 20, t: 1.1 });
+        break;
     }
   }
 
@@ -295,9 +339,13 @@ export class Game {
       case "dash": a.dash(); break;
       case "click": a.click(); break;
       case "empty": a.empty(); break;
+      case "zap": a.zap(dist); break;
+      case "flame": a.flame(dist); break;
       default: {
         if (id.startsWith("shot")) a.shot(parseInt(id.slice(4), 10) || 0, dist);
         else if (id.startsWith("reload")) a.reload(parseInt(id.slice(6), 10) || 0);
+        else if (id.startsWith("ub")) a.ub(parseInt(id.slice(2), 10) || 0);
+        else if (id.startsWith("buffUp")) a.buffUp(parseInt(id.slice(6), 10) || 0);
       }
     }
   }
@@ -404,12 +452,26 @@ export class Game {
       this.startReloadEnt(this.me);
     }
     if (c === "ShiftLeft" || c === "ShiftRight" || c === "Space") this.tryDash(this.me);
+    if (c === "KeyQ") this.cycleUb(this.me);
     for (let i = 0; i < 4; i++) if (c === `Digit${i + 1}`) this.switchWeaponEnt(this.me, i);
   }
 
   private onKeyUp(e: KeyboardEvent) { this.keys.delete(e.code); }
   private onMouseMove(e: MouseEvent) { this.mouse.x = e.clientX; this.mouse.y = e.clientY; }
-  private onMouseDown(e: MouseEvent) { this.audio.ensure(); if (e.button === 0) this.mouse.down = true; }
+  private onMouseDown(e: MouseEvent) {
+    this.audio.ensure();
+    if (e.button === 0) this.mouse.down = true;
+    if (e.button === 2 && this.phase === "playing" && this.me && !this.me.dead) {
+      if (this.netMode === "client") {
+        // хост выстрелит; локально предсказываем кулдаун для HUD
+        this.me.rmbSeq++;
+        const k = this.me.ubIdx;
+        if (this.me.ubOwned[k] && this.me.ubCool[k] <= 0) this.me.ubCool[k] = UNDERBARRELS[k].cd;
+      } else {
+        this.rmbQueued = true;
+      }
+    }
+  }
   private onMouseUp(e: MouseEvent) { if (e.button === 0) this.mouse.down = false; }
 
   private onWheel(e: WheelEvent) {
@@ -441,6 +503,10 @@ export class Game {
       stillT: 0, stillAcc: 0, prevX: 0, prevY: 0,
       sprayT: 0, sprayCool: 0,
       fireHeld: false, reloadSeqSeen: 0,
+      stacks: emptyStacks(), stats: computeStats(emptyStacks()),
+      ubOwned: [false, false, false, false], ubIdx: 0,
+      ubCool: [0, 0, 0, 0], ubFlame: 0, ubCold: 0, flameAcc: 0,
+      rmbSeq: 0, rmbSeen: 0, ubQueued: false,
     };
   }
 
@@ -561,6 +627,7 @@ export class Game {
     this.world = generateWorld(seed, opts);
     this.bots = []; this.bullets = []; this.particles = []; this.floaters = [];
     this.flashes = []; this.hitmarks = []; this.pickups = []; this.pending = [];
+    this.grenades = []; this.grenadePos = []; this.lightnings = []; this.vamps = [];
     this.fovPoly = [];
     this.floorCv.width = MAP_W; this.floorCv.height = MAP_H;
     this.decalCv.width = MAP_W; this.decalCv.height = MAP_H;
@@ -716,6 +783,7 @@ export class Game {
       tx: x, ty: y, lastSeen: -99, seenX: x, seenY: y,
       cool: 1 + Math.random(), strafe: Math.random() < 0.5 ? 1 : -1, strafeT: 1 + Math.random() * 2,
       flash: 0, spawnT: 0, lunge: 0, weak: -1, aura: "", auraR: 0,
+      burn: 0, burnDps: 0, burnSrc: -1, slow: 0, lastSrc: -1,
     });
     this.burst(x, y, 8, "#5a7d52", 90);
   }
@@ -730,6 +798,7 @@ export class Game {
       tx: x, ty: y, lastSeen: this.time, seenX: x, seenY: y,
       cool: 1.2, strafe: 1, strafeT: 2,
       flash: 0, spawnT: 0, lunge: 0, weak: bd.weak, aura: bd.aura, auraR: bd.auraR,
+      burn: 0, burnDps: 0, burnSrc: -1, slow: 0, lastSrc: -1,
     });
     this.flashes.push({ x, y, r: 120, t: 0.5, max: 0.5, color: AURAS[bd.aura].color });
     this.burst(x, y, 30, AURAS[bd.aura].color, 260);
@@ -792,24 +861,33 @@ export class Game {
       return;
     }
     ent.mags[ent.wi]--;
-    let rate = w.rate;
-    let spread = w.spread;
+    const st = ent.stats;
+    let rate = w.rate / st.rateMul;        // пассивная скорострельность
+    let spread = w.spread * st.accMul;     // пассивная точность
     if (ent.buffs.firerate > 0) rate *= 0.55;
     if (ent.buffs.precision > 0) spread *= 0.4;
     ent.fireCool = rate;
     ent.recoil = Math.min(1, ent.recoil + 0.55);
     if (ent === this.me) this.shake = Math.min(14, this.shake + w.kick * 0.45);
 
+    // откат (отдача толкает назад): снайперка 5, остальное минимально
+    this.knockback(ent, ent.aim, ent.wi === 3 ? 5 : 1);
+
     const aim = ent.aim;
     const mx = ent.x + Math.cos(aim) * (ent.r + w.len);
     const my = ent.y + Math.sin(aim) * (ent.r + w.len);
     for (let p = 0; p < w.pellets; p++) {
       const a = aim + (Math.random() - 0.5) * spread * 2 + (w.pellets > 1 ? (p - (w.pellets - 1) / 2) * 0.055 : 0);
+      const crit = rollCrit(st.critChance);
       this.bullets.push({
         id: this.bulletId++, x: mx, y: my, px: mx, py: my,
         vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed,
-        dmg: w.dmg, friendly: true, life: w.range / w.speed, kind: ent.wi, owner: ent.id,
+        dmg: w.dmg * st.dmgMul * (crit ? st.critMul : 1),
+        friendly: true, life: w.range / w.speed, kind: ent.wi, owner: ent.id,
         rocket: false, targetId: -1,
+        pierce: w.pierce > 0 ? w.pierce : undefined,
+        crit: crit || undefined,
+        hitIds: w.pierce > 0 ? [] : undefined,
       });
     }
     this.flashes.push({ x: mx, y: my, r: 20 + w.kick * 2.4, t: 0.06, max: 0.06, color: "#ffd98a" });
@@ -856,6 +934,236 @@ export class Game {
     });
     this.sfx("rocket", ent === this.me ? 0 : 300);
     this.floaters.push({ x: ent.x, y: ent.y - 24, txt: "РАКЕТА!", color: "#ffb020", t: 0.8, max: 0.8, size: 14 });
+  }
+
+  /* ---------------- подствольное оружие ---------------- */
+
+  private cycleUb(ent: PlayerEnt) {
+    const owned = [0, 1, 2, 3].filter((i) => ent.ubOwned[i]);
+    if (!owned.length) { if (ent === this.me) this.sfx("empty"); return; }
+    const cur = owned.indexOf(ent.ubIdx);
+    ent.ubIdx = owned[(cur + 1 + owned.length) % owned.length];
+    if (ent === this.me) { this.sfx("click"); this.pushHud(); }
+  }
+
+  /** откат: импульс назад от направления выстрела, складывается с инерцией дэша */
+  private knockback(ent: PlayerEnt, aim: number, force: number) {
+    if (force <= 0) return;
+    ent.vx -= Math.cos(aim) * force * 26;
+    ent.vy -= Math.sin(aim) * force * 26;
+  }
+
+  private fireUnderbarrel(ent: PlayerEnt) {
+    if (ent.dead) return;
+    const k = ent.ubIdx;
+    if (!ent.ubOwned[k]) { if (ent === this.me) this.sfx("empty"); return; }
+    if (ent.ubCool[k] > 0) { if (ent === this.me) this.sfx("empty"); return; }
+    const def = UNDERBARRELS[k];
+    ent.ubCool[k] = def.cd;
+    const aim = ent.aim;
+    const st = ent.stats;
+    const dMe = Math.hypot(ent.x - this.me.x, ent.y - this.me.y);
+
+    if (k === 0) {
+      // подствольный дробовик: 6 дробинок, малый разброс, урон 15
+      const mx = ent.x + Math.cos(aim) * (ent.r + 14);
+      const my = ent.y + Math.sin(aim) * (ent.r + 14);
+      for (let p = 0; p < 6; p++) {
+        const a = aim + (Math.random() - 0.5) * 0.12 * st.accMul * 2 + (p - 2.5) * 0.04;
+        this.bullets.push({
+          id: this.bulletId++, x: mx, y: my, px: mx, py: my,
+          vx: Math.cos(a) * 900, vy: Math.sin(a) * 900,
+          dmg: 15 * st.dmgMul, friendly: true, life: 430 / 900, kind: 1, owner: ent.id,
+          rocket: false, targetId: -1,
+        });
+      }
+      this.flashes.push({ x: mx, y: my, r: 22, t: 0.06, max: 0.06, color: "#ffd98a" });
+      this.queueFx({ k: "flash", x: mx, y: my, r: 22, color: "#ffd98a" });
+      this.knockback(ent, aim, def.kb);
+      this.sfx("ub0", ent === this.me ? 0 : dMe);
+    } else if (k === 1) {
+      // гранатомёт: снаряд по дуге, взрыв AoE 80, урон 40
+      let dist = 380;
+      if (ent === this.me) {
+        const wx = this.mouse.x + this.camX, wy = this.mouse.y + this.camY;
+        dist = clamp(Math.hypot(wx - ent.x, wy - ent.y), 120, 470);
+      }
+      this.grenades.push({
+        x: ent.x, y: ent.y,
+        tx: ent.x + Math.cos(aim) * dist, ty: ent.y + Math.sin(aim) * dist,
+        t: 0, dur: 0.3 + dist / 950, src: ent.id,
+      });
+      this.knockback(ent, aim, def.kb);
+      this.sfx("ub1", ent === this.me ? 0 : dMe);
+    } else if (k === 2) {
+      // огнемёт: струя 3 с (урон тикает в tickFlame)
+      ent.ubFlame = 3;
+      this.sfx("ub2", ent === this.me ? 0 : dMe);
+    } else {
+      // конус холода: активная зона 4 с (замедление в tickCold)
+      ent.ubCold = 4;
+      this.flashes.push({ x: ent.x + Math.cos(aim) * 60, y: ent.y + Math.sin(aim) * 60, r: 70, t: 0.3, max: 0.3, color: "#5fd8d0" });
+      this.queueFx({ k: "flash", x: ent.x + Math.cos(aim) * 60, y: ent.y + Math.sin(aim) * 60, r: 70, color: "#5fd8d0" });
+      this.sfx("ub3", ent === this.me ? 0 : dMe);
+    }
+    if (ent === this.me) this.pushHud();
+  }
+
+  private tickFlame(ent: PlayerEnt, dt: number) {
+    const len = rayDist(this.world.rects, ent.x, ent.y, ent.aim, 120);
+    const dx = Math.cos(ent.aim), dy = Math.sin(ent.aim);
+    for (const b of this.bots) {
+      const t = clamp(((b.x - ent.x) * dx + (b.y - ent.y) * dy) / Math.max(1, len), 0, 1);
+      const px = ent.x + dx * len * t, py = ent.y + dy * len * t;
+      const rr = b.r + 18;
+      if (dist2(b.x, b.y, px, py) < rr * rr) {
+        this.damageBot(b, 10 * dt, 99, false, ent.id, true); // 10 урона/сек
+        b.burn = 3; b.burnDps = 5; b.burnSrc = ent.id;       // поджог: 5/сек на 3 сек
+      }
+    }
+    // огненные частицы вдоль струи
+    if (Math.random() < 0.9) {
+      const d = Math.random() * len;
+      this.particles.push({
+        x: ent.x + dx * d + (Math.random() - 0.5) * 16, y: ent.y + dy * d + (Math.random() - 0.5) * 16,
+        vx: dx * 130 + (Math.random() - 0.5) * 70, vy: dy * 130 + (Math.random() - 0.5) * 70,
+        life: 0.25 + Math.random() * 0.2, max: 0.45, size: 3 + Math.random() * 4,
+        color: Math.random() < 0.5 ? "#ff9a3d" : "#ffd98a", drag: 3,
+      });
+    }
+    ent.flameAcc += dt;
+    if (ent.flameAcc >= 0.14) {
+      ent.flameAcc = 0;
+      this.sfx("flame", ent === this.me ? 0 : Math.hypot(ent.x - this.me.x, ent.y - this.me.y));
+    }
+  }
+
+  private tickCold(ent: PlayerEnt) {
+    // конус 60° (±30°), длина 150, в сторону курсора; замедление 30%
+    for (const b of this.bots) {
+      const d2b = dist2(b.x, b.y, ent.x, ent.y);
+      if (d2b > 150 * 150) continue;
+      if (angleOff(ent.aim, ent.x, ent.y, b.x, b.y) > Math.PI / 6 + 0.1) continue;
+      if (!losClear(this.world.rects, ent.x, ent.y, b.x, b.y)) continue;
+      b.slow = 0.3;
+      if (Math.random() < 0.2) {
+        this.particles.push({
+          x: b.x + (Math.random() - 0.5) * 16, y: b.y + (Math.random() - 0.5) * 16,
+          vx: (Math.random() - 0.5) * 40, vy: -30 - Math.random() * 40,
+          life: 0.4, max: 0.4, size: 2.5, color: "#bfeef0", drag: 2,
+        });
+      }
+    }
+  }
+
+  /* ---------------- пассивные баффы (коллектиблы) ---------------- */
+
+  private addStack(ent: PlayerEnt, id: StatBuffId) {
+    const def = buffDef(id);
+    ent.stacks[id]++;
+    ent.stats = computeStats(ent.stacks);
+    if (id === "hp") ent.hp = Math.min(ent.stats.maxHp, ent.hp + 2);
+    const col = RARITY_COLORS[def.rarity];
+    this.floaters.push({ x: ent.x, y: ent.y - 28, txt: `${def.name} · ${buffDescribe(id, ent.stacks[id])}`, color: col, t: 1.3, max: 1.3, size: 14 });
+    this.queueFx({ k: "float", x: ent.x, y: ent.y - 28, txt: def.name, color: col, size: 14 });
+    if (id === "aura" && ent.stacks[id] === 1) {
+      this.floaters.push({ x: ent.x, y: ent.y - 46, txt: "АУРА ГОРЕНИЯ АКТИВНА", color: "#ff9a3d", t: 1.4, max: 1.4, size: 13 });
+    }
+    this.sfxIfMe(ent, `buffUp${def.rarity}`);
+    this.pushHud();
+  }
+
+  /** цепная молния: от поражённой цели прыгает на ближайших врагов */
+  private tryChain(shooter: PlayerEnt, origin: Bot, dmg: number) {
+    const st = shooter.stats;
+    if (st.chain.jumps < 1 || dmg <= 0) return;
+    if (Math.random() > st.chain.chance) return;
+    const anchors = [{ x: origin.x, y: origin.y }];
+    const used = new Set<number>([origin.id]);
+    let cur = origin;
+    const jumpDmg = dmg * st.chain.dmg;
+    for (let j = 0; j < st.chain.jumps; j++) {
+      const next = nearestOther(this.bots, used, cur.x, cur.y, 120);
+      if (!next) break;
+      used.add(next.id);
+      anchors.push({ x: next.x, y: next.y });
+      this.damageBot(next, jumpDmg, 99, false, shooter.id);
+      cur = next;
+    }
+    if (anchors.length > 1) {
+      const path = lightningPath(anchors);
+      this.lightnings.push({ pts: path, t: 0.2, max: 0.2 });
+      this.queueFx({ k: "zap", pts: path });
+      this.sfx("zap", shooter === this.me ? 0 : Math.hypot(shooter.x - this.me.x, shooter.y - this.me.y));
+    }
+  }
+
+  /** взрыв подствольной гранаты: AoE радиус 80, урон 40 */
+  private explodeUb(x: number, y: number, dmg: number, src: number) {
+    const R = 80;
+    this.flashes.push({ x, y, r: R, t: 0.3, max: 0.3, color: "#ffb020" });
+    this.queueFx({ k: "flash", x, y, r: R, color: "#ffb020" });
+    this.burst(x, y, 26, "#ff9a3d", 320);
+    this.burst(x, y, 14, "#ffd98a", 240);
+    this.queueFx({ k: "burst", x, y, n: 26, color: "#ff9a3d", speed: 320 });
+    this.sfx("boom", Math.hypot(x - this.me.x, y - this.me.y));
+    this.queueFx({ k: "shake", v: 7 });
+    this.shake = Math.min(24, this.shake + 7);
+    for (const b of [...this.bots]) {
+      const d = Math.hypot(b.x - x, b.y - y);
+      if (d < R + b.r) this.damageBot(b, dmg, 99, false, src);
+    }
+  }
+
+  private tickGrenades(dt: number) {
+    for (const g of this.grenades) {
+      g.t += dt;
+      if (g.t >= g.dur) { g.done = true; this.explodeUb(g.tx, g.ty, 40, g.src); }
+    }
+    this.grenades = this.grenades.filter((g) => !g.done);
+    this.grenadePos = this.grenades.map((g) => {
+      const t = clamp(g.t / g.dur, 0, 1);
+      return { x: g.x + (g.tx - g.x) * t, y: g.y + (g.ty - g.y) * t, k: Math.sin(Math.PI * t) };
+    });
+  }
+
+  /** аура горения: 5 урона/сек всем врагам в радиусе (пассивная) */
+  private tickAuras(dt: number) {
+    for (const p of this.players) {
+      if (p.dead || p.stats.auraR <= 0) continue;
+      const r2 = p.stats.auraR * p.stats.auraR;
+      for (const b of this.bots) {
+        if (dist2(b.x, b.y, p.x, p.y) < r2) {
+          this.damageBot(b, 5 * dt, 99, false, p.id, true);
+          if (Math.random() < dt * 6) this.burst(b.x, b.y, 1, "#ff9a3d", 70);
+        }
+      }
+      if (Math.random() < dt * 10) {
+        const a = Math.random() * TAU;
+        this.particles.push({
+          x: p.x + Math.cos(a) * p.stats.auraR, y: p.y + Math.sin(a) * p.stats.auraR,
+          vx: (Math.random() - 0.5) * 30, vy: -40 - Math.random() * 50,
+          life: 0.5, max: 0.5, size: 3, color: "#ff9a3d", drag: 1,
+        });
+      }
+    }
+  }
+
+  private stepLightnings(dt: number) {
+    for (const l of this.lightnings) l.t -= dt;
+    this.lightnings = this.lightnings.filter((l) => l.t > 0);
+  }
+
+  /** зелёные частицы вампиризма летят от трупа к игроку */
+  private stepVamps(dt: number) {
+    if (!this.me) return;
+    for (const v of this.vamps) {
+      v.t -= dt;
+      const dx = this.me.x - v.x, dy = this.me.y - v.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 10) { v.x += (dx / d) * 480 * dt; v.y += (dy / d) * 480 * dt; }
+    }
+    this.vamps = this.vamps.filter((v) => v.t > 0 && Math.hypot(this.me.x - v.x, this.me.y - v.y) > 10);
   }
 
   private botFire(b: Bot, dmgMul: number, target: PlayerEnt) {
@@ -926,14 +1234,23 @@ export class Game {
     if (decal) this.decalBlood(x, y);
   }
 
-  private damageBot(b: Bot, dmg: number, wKind: number) {
+  private damageBot(b: Bot, dmg: number, wKind: number, crit = false, src = -1, silent = false) {
     // boss resist: only weak weapon full damage
     if (b.kind === 3 && b.weak >= 0 && wKind !== b.weak) dmg *= 0.25;
     b.hp -= dmg;
+    if (src >= 0) b.lastSrc = src;
+    if (silent) {
+      if (b.hp <= 0) this.killBot(b);
+      return;
+    }
     b.flash = 0.1;
-    this.bloodFx(b.x, b.y, 5, true);
-    this.hitmarks.push({ x: b.x, y: b.y - b.r - 6, t: 0.18, big: false });
-    this.queueFx({ k: "blood", x: b.x, y: b.y, n: 5 });
+    this.bloodFx(b.x, b.y, crit ? 8 : 5, true);
+    this.hitmarks.push({ x: b.x, y: b.y - b.r - 6, t: 0.18, big: crit });
+    this.queueFx({ k: "blood", x: b.x, y: b.y, n: crit ? 8 : 5 });
+    if (crit) {
+      this.floaters.push({ x: b.x, y: b.y - b.r - 16, txt: `${Math.round(dmg)}!`, color: "#ffd23e", t: 0.8, max: 0.8, size: 19 });
+      this.queueFx({ k: "float", x: b.x, y: b.y - b.r - 16, txt: `${Math.round(dmg)}!`, color: "#ffd23e", size: 19 });
+    }
     if (b.kind === 3 && wKind !== b.weak) {
       this.floaters.push({ x: b.x, y: b.y - b.r - 14, txt: "РЕЗИСТ", color: "#8fae85", t: 0.5, max: 0.5, size: 11 });
     }
@@ -971,26 +1288,68 @@ export class Game {
       this.shake = Math.min(14, this.shake + 3);
     }
 
+    // вампиризм: убийца лечится за убийство
+    if (b.lastSrc >= 0) {
+      const killer = this.players.find((p) => p.id === b.lastSrc);
+      if (killer && !killer.dead && killer.stats.vamp > 0) {
+        const heal = Math.min(killer.stats.vamp, killer.stats.maxHp - killer.hp);
+        if (heal > 0.01) {
+          killer.hp += heal;
+          this.floaters.push({ x: b.x, y: b.y - 26, txt: `+${Math.round(heal)}`, color: "#7dff8a", t: 0.8, max: 0.8, size: 14 });
+          for (let i = 0; i < 5; i++) {
+            this.vamps.push({ x: b.x + (Math.random() - 0.5) * 20, y: b.y + (Math.random() - 0.5) * 20, t: 1.1 });
+          }
+          this.queueFx({ k: "vamp", x: b.x, y: b.y });
+          this.queueFx({ k: "float", x: b.x, y: b.y - 26, txt: `+${Math.round(heal)}`, color: "#7dff8a", size: 14 });
+        }
+      }
+    }
+
     if (!isBoss) this.rollDrops(b.x, b.y);
     this.bots = this.bots.filter((o) => o !== b);
   }
 
+  /** дроп из убитого врага: аптечки/броня/сюрпризы + пассивные баффы + подстволы + оружие */
   private rollDrops(x: number, y: number) {
-    if (this.pickups.length >= 12) return;
+    if (this.pickups.length >= 16) return;
     const w = this.wave;
+
+    // --- классические дропы ---
     const buffChance = Math.min(0.05 + w * 0.012, 0.3);
     const surpriseChance = Math.min(0.02 + w * 0.01, 0.22);
     const roll = Math.random();
     let kind: PickupKind | null = null;
-    if (roll < 0.09) kind = 0;               // medkit
-    else if (roll < 0.2) kind = 1;           // ammo
-    else if (roll < 0.3) kind = 3;           // armor
-    else if (roll < 0.3 + buffChance) kind = 4;       // buff
-    else if (roll < 0.3 + buffChance + surpriseChance) kind = 6; // surprise
-    else if (roll < 0.3 + buffChance + surpriseChance + 0.04) kind = 7; // spray
-    else if (roll < 0.3 + buffChance + surpriseChance + 0.07) kind = 8; // rocket
-    else if (roll < 0.3 + buffChance + surpriseChance + 0.1) kind = 5;  // upgrade
+    if (roll < 0.08) kind = 0;               // medkit
+    else if (roll < 0.17) kind = 1;          // ammo
+    else if (roll < 0.26) kind = 3;          // armor
+    else if (roll < 0.26 + buffChance * 0.6) kind = 4;       // timed buff
+    else if (roll < 0.26 + buffChance * 0.6 + surpriseChance) kind = 6; // surprise
+    else if (roll < 0.26 + buffChance * 0.6 + surpriseChance + 0.04) kind = 7; // spray
+    else if (roll < 0.26 + buffChance * 0.6 + surpriseChance + 0.07) kind = 8; // rocket
+    else if (roll < 0.26 + buffChance * 0.6 + surpriseChance + 0.1) kind = 5;  // upgrade
     if (kind !== null) this.pickups.push({ id: this.pickId++, kind, wi: 0, x, y, t: 0, visible: false });
+
+    // --- пассивные баффы: шанс растёт с волной, капнутые не спавнятся ---
+    const stacksList = this.players.map((p) => p.stacks);
+    for (const drop of rollBuffDrops(w, stacksList, x, y)) {
+      this.pickups.push({ id: this.pickId++, kind: 9, wi: 0, x: drop.x, y: drop.y, t: 0, visible: false, buff: drop.id });
+    }
+
+    // --- подстволы: 0.5%, пул по волнам, не спавнятся если все собраны ---
+    if (Math.random() < UB_DROP_CHANCE) {
+      const missing = ubPoolForWave(w).filter((k) => !this.players.every((p) => p.ubOwned[k]));
+      const ub = pickUbDrop(w, missing);
+      if (ub !== null) {
+        this.pickups.push({ id: this.pickId++, kind: 10, wi: 0, x, y: y + 14, t: 0, visible: false, ub });
+      }
+    }
+
+    // --- оружие: шанс падает с волной (обратная формула) ---
+    const missingWi = [1, 2, 3].filter((i) => this.players.some((p) => !p.owned[i]));
+    if (missingWi.length && Math.random() < weaponDropChance(0.03, w)) {
+      const wi = missingWi[(Math.random() * missingWi.length) | 0];
+      this.pickups.push({ id: this.pickId++, kind: 2, wi, x: x + 20, y, t: 0, visible: false });
+    }
   }
 
   private dropBossLoot(b: Bot) {
@@ -1004,6 +1363,12 @@ export class Game {
     spots.forEach((s, i) => {
       this.pickups.push({ id: this.pickId++, kind: kinds[i % kinds.length], wi: 0, x: s.x, y: s.y, t: 0, visible: false });
     });
+    // гарантированный редкий пассивный бафф с босса
+    const rarePool = STAT_BUFFS.filter((d) => d.rarity >= 2 && this.players.some((p) => p.stacks[d.id] < d.cap));
+    if (rarePool.length) {
+      const def = rarePool[(Math.random() * rarePool.length) | 0];
+      this.pickups.push({ id: this.pickId++, kind: 9, wi: 0, x: b.x, y: b.y + 44, t: 0, visible: false, buff: def.id });
+    }
   }
 
   private damageEnt(ent: PlayerEnt, dmg: number, fromX: number, fromY: number) {
@@ -1072,7 +1437,7 @@ export class Game {
   private applyPickup(ent: PlayerEnt, pk: Pickup) {
     switch (pk.kind) {
       case 0:
-        ent.hp = Math.min(100, ent.hp + 35);
+        ent.hp = Math.min(ent.stats.maxHp, ent.hp + 35);
         this.floaters.push({ x: pk.x, y: pk.y - 14, txt: "+35 HP", color: "#7dff8a", t: 0.9, max: 0.9, size: 14 });
         this.sfxIfMe(ent, "pickup");
         break;
@@ -1138,6 +1503,33 @@ export class Game {
       case 8:
         this.launchRocket(ent);
         break;
+      case 9: {
+        // пассивный бафф (коллектибл)
+        const id = pk.buff!;
+        const def = buffDef(id);
+        if (ent.stacks[id] >= def.cap) {
+          this.score += 100;
+          this.floaters.push({ x: pk.x, y: pk.y - 14, txt: "МАКСИМУМ +100", color: "#8fae85", t: 0.9, max: 0.9, size: 12 });
+        } else {
+          this.addStack(ent, id);
+        }
+        break;
+      }
+      case 10: {
+        // подствольное оружие
+        const k = pk.ub!;
+        if (ent.ubOwned[k]) {
+          this.score += 150;
+          this.floaters.push({ x: pk.x, y: pk.y - 14, txt: "УЖЕ ЕСТЬ +150", color: "#8fae85", t: 0.9, max: 0.9, size: 12 });
+        } else {
+          ent.ubOwned[k] = true;
+          ent.ubIdx = k;
+          this.floaters.push({ x: pk.x, y: pk.y - 14, txt: UNDERBARRELS[k].name, color: "#ffb020", t: 1.4, max: 1.4, size: 15 });
+          this.queueFx({ k: "float", x: pk.x, y: pk.y - 14, txt: UNDERBARRELS[k].name, color: "#ffb020", size: 15 });
+          this.sfxIfMe(ent, "weaponGet");
+        }
+        break;
+      }
     }
     this.burst(pk.x, pk.y, 10, "#a8ff3e", 140);
     this.queueFx({ k: "burst", x: pk.x, y: pk.y, n: 10, color: "#a8ff3e", speed: 140 });
@@ -1205,7 +1597,7 @@ export class Game {
     const fr = Math.exp(-8.2 * dt);
     P.vx *= fr; P.vy *= fr;
     const spd = Math.hypot(P.vx, P.vy);
-    const maxSpd = 292 * (P.buffs.swift > 0 ? 1.45 : 1);
+    const maxSpd = 292 * P.stats.spdMul * (P.buffs.swift > 0 ? 1.45 : 1);
     if (spd > maxSpd && P.dashCool < 1.7) {
       const k = maxSpd / spd;
       P.vx *= k; P.vy *= k;
@@ -1232,8 +1624,14 @@ export class Game {
     ent.stillT = Math.max(0, ent.stillT - dt);
     ent.sprayT = Math.max(0, ent.sprayT - dt);
 
-    // regen
-    if (this.time - ent.lastHurt > 4.5 && ent.hp < 100) ent.hp = Math.min(100, ent.hp + 3.2 * dt);
+    // подстволы: кулдауны и активные режимы
+    for (let i = 0; i < 4; i++) ent.ubCool[i] = Math.max(0, ent.ubCool[i] - dt);
+    if (ent.ubFlame > 0) { ent.ubFlame -= dt; this.tickFlame(ent, dt); }
+    if (ent.ubCold > 0) { ent.ubCold -= dt; this.tickCold(ent); }
+
+    // regen (до максимума, заданного стаками живучести)
+    const maxHp = ent.stats.maxHp;
+    if (this.time - ent.lastHurt > 4.5 && ent.hp < maxHp) ent.hp = Math.min(maxHp, ent.hp + 3.2 * dt);
 
     // still debuff damage
     if (ent.stillT > 0) {
@@ -1276,6 +1674,14 @@ export class Game {
     // fire
     const fireHeld = ent.isRemote ? ent.fireHeld : this.mouse.down;
     if (fireHeld && ent.fireCool <= 0) this.fireEnt(ent);
+
+    // underbarrel fire (ПКМ): локальный игрок — rmbQueued, сетевой — ubQueued
+    const wantUb = ent === this.me ? this.rmbQueued : ent.ubQueued;
+    if (wantUb) {
+      if (ent === this.me) this.rmbQueued = false;
+      else ent.ubQueued = false;
+      this.fireUnderbarrel(ent);
+    }
   }
 
   private updateAuthority(dt: number) {
@@ -1306,7 +1712,7 @@ export class Game {
       this.waveActive = false;
       const bonus = 200 + this.wave * 50;
       this.score += bonus;
-      for (const ent of this.players) if (!ent.dead) ent.hp = Math.min(100, ent.hp + 18);
+      for (const ent of this.players) if (!ent.dead) ent.hp = Math.min(ent.stats.maxHp, ent.hp + 18);
       for (const ent of this.players) for (let i = 1; i < 4; i++) if (ent.owned[i]) ent.reserves[i] = Math.min(WEAPONS[i].cap, ent.reserves[i] + Math.round(WEAPONS[i].cap * 0.3));
       this.cbs.onBanner("СЕКТОР ЗАЧИЩЕН", `бонус +${bonus} · аптечка и патроны пополнены`);
       this.sfx("pickup");
@@ -1338,11 +1744,15 @@ export class Game {
       }
     }
 
+    this.tickAuras(dt);
     this.updateBots(dt);
     this.updateBullets(dt);
+    this.tickGrenades(dt);
     this.updatePickups(dt);
     this.stepParticles(dt);
     this.stepFloaters(dt);
+    this.stepLightnings(dt);
+    this.stepVamps(dt);
     for (const f of this.flashes) f.t -= dt;
     this.flashes = this.flashes.filter((f) => f.t > 0);
     for (const h of this.hitmarks) h.t -= dt;
@@ -1386,6 +1796,7 @@ export class Game {
       this.netClient.send({
         t: "in", x: this.me.x, y: this.me.y, aim: this.me.aim,
         fire: this.mouse.down && !this.me.dead, weapon: this.me.wi, reloadSeq: this.me.reloadSeqSeen,
+        ub: this.me.ubIdx, rmb: this.me.rmbSeq,
       });
     }
 
@@ -1398,6 +1809,8 @@ export class Game {
 
     this.stepParticles(dt);
     this.stepFloaters(dt);
+    this.stepLightnings(dt);
+    this.stepVamps(dt);
     for (const f of this.flashes) f.t -= dt;
     this.flashes = this.flashes.filter((f) => f.t > 0);
     for (const h of this.hitmarks) h.t -= dt;
@@ -1457,6 +1870,17 @@ export class Game {
         ent.isRemote = ps.id !== this.meId;
         this.players.push(ent);
       }
+      // статы/подстволы — авторитетно от хоста
+      const st = emptyStacks();
+      for (const [k, n] of ps.stacks) st[k as StatBuffId] = n;
+      ent.stacks = st;
+      ent.stats = computeStats(st);
+      ent.ubOwned = [0, 1, 2, 3].map((i) => (ps.ubMask & (1 << i)) !== 0);
+      ent.ubIdx = ps.ubIdx;
+      ent.ubCool = ps.ubCool;
+      ent.ubFlame = ps.ubFlame;
+      ent.ubCold = ps.ubCold;
+
       if (ent === this.me) {
         // keep local x/y/aim; take authoritative vitals
         ent.hp = ps.hp; ent.armor = ps.armor; ent.dead = ps.dead;
@@ -1486,6 +1910,7 @@ export class Game {
         vx: 0, vy: 0, tx: b.x, ty: b.y, lastSeen: -99, seenX: b.seenX, seenY: b.seenY,
         cool: 0, strafe: 1, strafeT: 1, lunge: 0,
         weak: b.weak, aura: (b.aura || "") as AuraKind | "", auraR: b.kind === 3 ? (BOSSES[b.boss]?.auraR ?? 0) : 0,
+        burn: b.burn ? 1 : 0, burnDps: 5, burnSrc: -1, slow: b.slow ? 1 : 0, lastSrc: -1,
         visible: false,
       } as unknown as Bot;
     });
@@ -1505,6 +1930,8 @@ export class Game {
 
     this.pickups = s.pickups.map((pk) => ({ ...pk, visible: false }));
     for (const pk of this.pickups) pk.visible = this.isVisible(pk.x, pk.y, 14);
+
+    this.grenadePos = s.grenades.map((g) => ({ ...g }));
   }
 
   private prevPlayer(id: number): PlayerSnap | undefined { return this.snapPrev?.players.find((p) => p.id === id); }
@@ -1527,18 +1954,26 @@ export class Game {
         buffs: BUFF_KINDS.filter((k) => p.buffs[k] > 0),
         still: p.stillT,
         mag: p.mags[p.wi], reserve: p.wi === 0 ? -1 : p.reserves[p.wi],
+        stacks: Object.entries(p.stacks).filter(([, n]) => n > 0) as [string, number][],
+        ubMask: p.ubOwned.reduce((m, o, i) => m | (o ? 1 << i : 0), 0),
+        ubIdx: p.ubIdx,
+        ubCool: p.ubCool.map((c) => Math.round(c * 10) / 10),
+        ubFlame: Math.round(p.ubFlame * 10) / 10,
+        ubCold: Math.round(p.ubCold * 10) / 10,
       })),
       bots: this.bots.map((b) => ({
         id: b.id, kind: b.kind, boss: b.boss,
         x: Math.round(b.x), y: Math.round(b.y), hp: Math.round(b.hp), maxHp: Math.round(b.maxHp), r: b.r,
         dir: b.dir, state: b.state, flash: b.flash, weak: b.weak, aura: b.aura, spawnT: b.spawnT,
         seenX: Math.round(b.seenX), seenY: Math.round(b.seenY),
+        burn: b.burn > 0, slow: b.slow > 0,
       })),
       bullets: this.bullets.map((bl) => ({
         id: bl.id, x: Math.round(bl.x), y: Math.round(bl.y), px: Math.round(bl.px), py: Math.round(bl.py),
-        friendly: bl.friendly, kind: bl.kind, rocket: bl.rocket,
+        friendly: bl.friendly, kind: bl.kind, rocket: bl.rocket, crit: bl.crit === true,
       })),
-      pickups: this.pickups.map((pk) => ({ id: pk.id, kind: pk.kind, wi: pk.wi, x: Math.round(pk.x), y: Math.round(pk.y), t: pk.t })),
+      pickups: this.pickups.map((pk) => ({ id: pk.id, kind: pk.kind, wi: pk.wi, x: Math.round(pk.x), y: Math.round(pk.y), t: pk.t, buff: pk.buff, ub: pk.ub })),
+      grenades: this.grenadePos.map((g) => ({ x: Math.round(g.x), y: Math.round(g.y), k: Math.round(g.k * 100) / 100 })),
       foeMods: { hp: this.foeHpMul(), dmg: this.foeDmgMul(), spd: this.foeSpdMul() },
     };
   }
@@ -1559,13 +1994,22 @@ export class Game {
   private updateBots(dt: number) {
     const spdMul = this.foeSpdMul();
     const dmgMul = this.foeDmgMul();
-    for (const b of this.bots) {
+    for (const b of [...this.bots]) {
+      // DoT горения (огнемёт)
+      if (b.burn > 0) {
+        b.burn -= dt;
+        this.damageBot(b, b.burnDps * dt, 99, false, b.burnSrc, true);
+        if (Math.random() < dt * 14) this.burst(b.x, b.y, 1, "#ff9a3d", 60);
+        if (b.hp <= 0) continue; // сгорел — дальше не обновляем
+      }
+      b.slow = Math.max(0, b.slow - dt);
+
       const target = this.nearestAlivePlayer(b.x, b.y);
       if (!target) continue;
       const isBoss = b.kind === 3;
       const def = isBoss ? null : BOTS[b.kind];
       const bd = isBoss ? BOSSES[b.boss] : null;
-      const speed = (isBoss ? bd!.speed : def!.speed) * spdMul;
+      const speed = (isBoss ? bd!.speed : def!.speed) * spdMul * (b.slow > 0 ? 0.7 : 1);
       const sight = isBoss ? 900 : def!.sight;
       const range = isBoss ? 560 : def!.range;
 
@@ -1744,12 +2188,27 @@ export class Game {
       }
       if (!dead && bl.friendly) {
         for (const b of this.bots) {
+          if (bl.hitIds && bl.hitIds.includes(b.id)) continue; // уже прошита
           const rr = b.r + 3;
           if (dist2(bl.x, bl.y, b.x, b.y) < rr * rr) {
-            dead = true;
-            if (bl.rocket) this.explode(bl.x, bl.y, bl.dmg, bl.owner);
-            else this.damageBot(b, bl.dmg, bl.kind);
-            break;
+            if (bl.rocket) {
+              dead = true;
+              this.explode(bl.x, bl.y, bl.dmg, bl.owner);
+              break;
+            }
+            // цепная молния — до урона (исходит от точки попадания)
+            const shooter = this.players.find((p) => p.id === bl.owner);
+            if (shooter) this.tryChain(shooter, b, bl.dmg);
+            this.damageBot(b, bl.dmg, bl.kind, bl.crit === true, bl.owner);
+            if ((bl.pierce ?? 0) > 0) {
+              bl.pierce = (bl.pierce ?? 0) - 1;
+              if (!bl.hitIds) bl.hitIds = [];
+              bl.hitIds.push(b.id);
+              // пуля летит дальше — не умирает
+            } else {
+              dead = true;
+              break;
+            }
           }
         }
       } else if (!dead && !bl.friendly) {
@@ -1942,6 +2401,22 @@ export class Game {
       this.drawPickup(ctx, pk);
     }
 
+    // подствольные гранаты в полёте (дуга)
+    for (const g of this.grenadePos) {
+      const h = g.k * 26;
+      ctx.fillStyle = "rgba(0,0,0,0.35)";
+      ctx.beginPath();
+      ctx.ellipse(g.x, g.y + 4, 5, 2.5, 0, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = "#31402a";
+      ctx.beginPath(); ctx.arc(g.x, g.y - h, 5.5, 0, TAU); ctx.fill();
+      ctx.strokeStyle = "#ffb020";
+      ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(g.x, g.y - h, 5.5, 0, TAU); ctx.stroke();
+      ctx.fillStyle = "#ffb020";
+      ctx.fillRect(g.x - 1, g.y - h - 8, 2, 3);
+    }
+
     this.drawWalls(ctx);
 
     if (this.phase !== "menu") {
@@ -1992,20 +2467,25 @@ export class Game {
     ctx.globalCompositeOperation = "lighter";
 
     for (const bl of this.bullets) {
-      const col = bl.friendly ? (bl.rocket ? "#ffb020" : "#d0ff7a") : "#ff9a3d";
+      const isCrit = bl.crit === true;
+      const col = bl.friendly ? (bl.rocket ? "#ffb020" : isCrit ? "#ffd23e" : "#d0ff7a") : "#ff9a3d";
       ctx.strokeStyle = col;
-      ctx.globalAlpha = 0.28;
-      ctx.lineWidth = bl.rocket ? 9 : 6;
+      ctx.globalAlpha = isCrit ? 0.45 : 0.28;
+      ctx.lineWidth = bl.rocket ? 9 : isCrit ? 10 : 6;
       ctx.beginPath();
       ctx.moveTo(bl.px, bl.py);
       ctx.lineTo(bl.x, bl.y);
       ctx.stroke();
       ctx.globalAlpha = 0.95;
-      ctx.lineWidth = bl.rocket ? 4 : 2.2;
+      ctx.lineWidth = bl.rocket ? 4 : isCrit ? 3.6 : 2.2;
       ctx.beginPath();
       ctx.moveTo(bl.px, bl.py);
       ctx.lineTo(bl.x, bl.y);
       ctx.stroke();
+      if (isCrit) {
+        ctx.fillStyle = "#fff2b8";
+        ctx.beginPath(); ctx.arc(bl.x, bl.y, 3.4, 0, TAU); ctx.fill();
+      }
     }
     ctx.globalAlpha = 1;
 
@@ -2038,6 +2518,90 @@ export class Game {
         ctx.globalAlpha = 1;
       }
     }
+
+    // аура горения игрока
+    for (const p of this.players) {
+      if (p.dead || p.stats.auraR <= 0) continue;
+      const pul = 1 + 0.04 * Math.sin(this.time * 5);
+      const R = p.stats.auraR * pul;
+      ctx.globalAlpha = 0.55;
+      ctx.strokeStyle = "#ff9a3d";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([12, 9]);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, R, this.time * 0.9, this.time * 0.9 + TAU);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const ag = ctx.createRadialGradient(p.x, p.y, R * 0.4, p.x, p.y, R);
+      ag.addColorStop(0, "rgba(255,120,40,0)");
+      ag.addColorStop(1, "rgba(255,120,40,0.13)");
+      ctx.fillStyle = ag;
+      ctx.beginPath(); ctx.arc(p.x, p.y, R, 0, TAU); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // струя огнемёта
+    for (const p of this.players) {
+      if (p.dead || p.ubFlame <= 0) continue;
+      const len = rayDist(this.world.rects, p.x, p.y, p.aim, 120);
+      const ex = p.x + Math.cos(p.aim) * len;
+      const ey = p.y + Math.sin(p.aim) * len;
+      const flick = 0.75 + 0.25 * Math.sin(this.time * 40 + p.id);
+      ctx.globalAlpha = 0.3 * flick;
+      ctx.strokeStyle = "#ff6a2e";
+      ctx.lineWidth = 26;
+      ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(p.x + Math.cos(p.aim) * 16, p.y + Math.sin(p.aim) * 16); ctx.lineTo(ex, ey); ctx.stroke();
+      ctx.globalAlpha = 0.8 * flick;
+      ctx.strokeStyle = "#ffd98a";
+      ctx.lineWidth = 8;
+      ctx.beginPath(); ctx.moveTo(p.x + Math.cos(p.aim) * 16, p.y + Math.sin(p.aim) * 16); ctx.lineTo(ex, ey); ctx.stroke();
+      ctx.lineCap = "butt";
+      ctx.globalAlpha = 1;
+    }
+
+    // конус холода
+    for (const p of this.players) {
+      if (p.dead || p.ubCold <= 0) continue;
+      ctx.globalAlpha = 0.14 + 0.05 * Math.sin(this.time * 7);
+      ctx.fillStyle = "#5fd8d0";
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.arc(p.x, p.y, 150, p.aim - Math.PI / 6, p.aim + Math.PI / 6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 0.45;
+      ctx.strokeStyle = "#8fe8e4";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // цепные молнии
+    for (const l of this.lightnings) {
+      const k = l.t / l.max;
+      ctx.globalAlpha = k;
+      ctx.strokeStyle = "#cfeaff";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(l.pts[0].x, l.pts[0].y);
+      for (let i = 1; i < l.pts.length; i++) ctx.lineTo(l.pts[i].x, l.pts[i].y);
+      ctx.stroke();
+      ctx.strokeStyle = "#7db8ff";
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // частицы вампиризма
+    for (const v of this.vamps) {
+      ctx.globalAlpha = clamp(v.t, 0, 1);
+      ctx.fillStyle = "#7dff8a";
+      ctx.beginPath(); ctx.arc(v.x, v.y, 3, 0, TAU); ctx.fill();
+      ctx.globalAlpha = clamp(v.t, 0, 1) * 0.4;
+      ctx.beginPath(); ctx.arc(v.x, v.y, 6, 0, TAU); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
 
     for (const s of this.pending) {
       if (s.t < 1.1) {
@@ -2091,6 +2655,7 @@ export class Game {
     const x = pk.x, y = pk.y + bob;
     ctx.save();
     ctx.translate(x, y);
+    const hexToRgb = (h: string) => `${parseInt(h.slice(1, 3), 16)},${parseInt(h.slice(3, 5), 16)},${parseInt(h.slice(5, 7), 16)}`;
     const glowRgb =
       pk.kind === 0 ? "125,255,138" :
       pk.kind === 1 ? "255,176,32" :
@@ -2099,7 +2664,9 @@ export class Game {
       pk.kind === 5 ? "192,122,255" :
       pk.kind === 6 ? "232,200,52" :
       pk.kind === 7 ? "255,176,32" :
-      pk.kind === 8 ? "255,106,46" : "168,255,62";
+      pk.kind === 8 ? "255,106,46" :
+      pk.kind === 9 && pk.buff ? hexToRgb(RARITY_COLORS[buffDef(pk.buff).rarity]) :
+      pk.kind === 10 ? "255,176,32" : "168,255,62";
     const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, 26);
     glow.addColorStop(0, `rgba(${glowRgb},0.3)`);
     glow.addColorStop(1, `rgba(${glowRgb},0)`);
@@ -2156,6 +2723,25 @@ export class Game {
       ctx.strokeStyle = "#ff6a2e"; ctx.lineWidth = 2; ctx.strokeRect(-4, -11, 8, 22);
       ctx.fillStyle = "#ff6a2e";
       ctx.beginPath(); ctx.moveTo(0, -15); ctx.lineTo(-4, -11); ctx.lineTo(4, -11); ctx.closePath(); ctx.fill();
+    } else if (pk.kind === 9 && pk.buff) {
+      // пассивный бафф: ромб с глифом, цвет свечения = редкость
+      const def = buffDef(pk.buff);
+      const col = RARITY_COLORS[def.rarity];
+      ctx.rotate(Math.sin(pk.t * 2.6) * 0.16);
+      ctx.fillStyle = "#0e1611";
+      ctx.beginPath(); ctx.moveTo(0, -11); ctx.lineTo(9, 0); ctx.lineTo(0, 11); ctx.lineTo(-9, 0); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = col; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(0, -11); ctx.lineTo(9, 0); ctx.lineTo(0, 11); ctx.lineTo(-9, 0); ctx.closePath(); ctx.stroke();
+      drawBuffGlyph(ctx, pk.buff, col);
+    } else if (pk.kind === 10 && pk.ub !== undefined) {
+      // подствольное оружие: оранжевый ящик со стволом
+      ctx.rotate(Math.sin(pk.t * 2.2) * 0.1);
+      ctx.fillStyle = "#33250e"; ctx.fillRect(-12, -8, 24, 16);
+      ctx.strokeStyle = "#ffb020"; ctx.lineWidth = 2; ctx.strokeRect(-12, -8, 24, 16);
+      ctx.fillStyle = "#ffb020";
+      ctx.fillRect(-8, -2, 16, 4);
+      ctx.fillRect(4, -5, 3, 10);
+      ctx.fillRect(-8, -5, 2, 2);
     } else {
       // weapon crate (2)
       ctx.rotate(Math.sin(pk.t * 2) * 0.08);
@@ -2261,6 +2847,20 @@ export class Game {
       if (b.flash > 0) {
         ctx.globalAlpha = (b.flash / 0.1) * 0.85;
         ctx.fillStyle = "#ffffff";
+        ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, TAU); ctx.fill();
+      }
+
+      // горение (DoT)
+      if (b.burn > 0) {
+        ctx.globalAlpha = alpha * (0.5 + 0.3 * Math.sin(this.time * 22 + b.id));
+        ctx.strokeStyle = "#ff9a3d";
+        ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.arc(b.x, b.y, b.r + 3, 0, TAU); ctx.stroke();
+      }
+      // заморозка
+      if (b.slow > 0) {
+        ctx.globalAlpha = alpha * 0.45;
+        ctx.fillStyle = "rgba(95,216,208,0.4)";
         ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, TAU); ctx.fill();
       }
 
@@ -2377,7 +2977,7 @@ export class Game {
       if (dist2(mx + this.camX, my + this.camY, b.x, b.y) < (b.r + 8) * (b.r + 8)) { hot = true; break; }
     }
     const w = weaponStats(this.me.wi, this.me.upgraded[this.me.wi]);
-    let spread = w.spread;
+    let spread = w.spread * this.me.stats.accMul;
     if (this.me.buffs.precision > 0) spread *= 0.4;
     const r = 10 + this.me.recoil * 16 + spread * 22;
     const col = hot ? "#ff5040" : "#c8ff6e";
@@ -2500,6 +3100,16 @@ export class Game {
       players: this.players.map((p) => ({ name: p.name, hp: Math.round(p.hp), dead: p.dead, colorIdx: p.colorIdx, me: p === this.me })),
       meDead: this.me.dead,
       netMode: this.netMode,
+      stats: STAT_BUFFS.filter((d) => this.me.stacks[d.id] > 0).map((d) => ({
+        id: d.id, name: d.name, val: buffDescribe(d.id, this.me.stacks[d.id]), rarity: d.rarity,
+      })),
+      ubs: UNDERBARRELS.map((u) => ({
+        name: u.name, short: u.short, desc: u.desc,
+        owned: this.me.ubOwned[u.id],
+        cool: this.me.ubCool[u.id] / u.cd,
+        active: this.me.ubIdx === u.id,
+      })),
+      ubIdx: this.me.ubIdx,
     });
   }
 }

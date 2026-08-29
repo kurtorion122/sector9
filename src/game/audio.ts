@@ -178,4 +178,40 @@ export class AudioSys {
     this.tone("sawtooth", 110, 30, 0.5, 0.4 * v);
     this.noise(0.6, 0.5 * v, 260, 0.5, "lowpass");
   }
+
+  /* -------- пассивные баффы (по редкости), подстволы, молния -------- */
+
+  buffUp(rarity: number) {
+    const f = 430 + rarity * 150;
+    this.tone("sine", f, f * 1.8, 0.13, 0.2);
+    this.tone("sine", f * 1.33, f * 2.3, 0.16, 0.15, 0.08);
+    if (rarity >= 3) this.tone("sine", f * 2, f * 3, 0.2, 0.12, 0.16);
+  }
+  /** 0 дробовик · 1 гранатомёт · 2 огнемёт · 3 холод */
+  ub(k: number) {
+    if (k === 0) {
+      this.tone("square", 150, 52, 0.17, 0.3);
+      this.noise(0.15, 0.45, 850, 0.7, "lowpass");
+    } else if (k === 1) {
+      this.tone("sawtooth", 340, 80, 0.32, 0.22);
+      this.noise(0.3, 0.22, 1500, 0.6, "highpass");
+    } else if (k === 2) {
+      this.noise(0.4, 0.3, 420, 0.5, "lowpass");
+      this.noise(0.3, 0.14, 2200, 0.7);
+    } else {
+      this.tone("sine", 1250, 240, 0.55, 0.2);
+      this.noise(0.45, 0.12, 3400, 0.8, "highpass");
+    }
+  }
+  flame(dist = 0) {
+    const v = this.att(dist);
+    if (v <= 0.01) return;
+    this.noise(0.12, 0.16 * v, 460, 0.55, "lowpass");
+  }
+  zap(dist = 0) {
+    const v = this.att(dist);
+    if (v <= 0.01) return;
+    this.tone("square", 1600, 160, 0.13, 0.2 * v);
+    this.noise(0.08, 0.16 * v, 3800, 0.9, "highpass");
+  }
 }
