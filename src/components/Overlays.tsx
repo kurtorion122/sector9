@@ -61,7 +61,7 @@ export function Hud({
 }) {
   const hud: HudData = hudIn ?? {
     hp: 100, armor: 0, wave: 0, left: 0, score: 0, best: 0, newBest: false, kills: 0, wi: 0,
-    slots: [0, 1, 2, 3].map((i) => ({ name: "", mag: 0, reserve: 0, reload: -1, owned: i === 0, infinite: i === 0, upgraded: false })),
+    slots: [0, 1, 2, 3].map((i) => ({ name: "", mag: 0, reserve: 0, cap: -1, reload: -1, owned: i === 0, infinite: i === 0, upgraded: false, prog: 0 })),
     dash: 1, time: 0,
     buffs: [], foeMods: { hp: 1, dmg: 1, spd: 1 }, still: 0, boss: null, players: [], meDead: false, netMode: "solo",
     stats: [], ubs: [], ubIdx: 0,
@@ -235,8 +235,15 @@ export function Hud({
                 </span>
                 <span className={`font-display text-[10px] tracking-wider truncate ml-2 ${active ? "text-[#d7ffb0]" : "text-[#7fae72]"}`}>
                   {s.owned ? s.name : "— НЕТ —"}
-                  {s.owned && s.upgraded && (
-                    <span className="text-[#c07aff] ml-1.5" title={UPGRADES[i].label + ": " + UPGRADES[i].desc}>◆</span>
+                  {s.owned && (
+                    <span
+                      className={`ml-1.5 tracking-tight ${s.upgraded ? "text-[#c07aff]" : "text-[#5a4a78]"}`}
+                      style={s.upgraded ? { textShadow: "0 0 8px rgba(192,122,255,0.9)" } : undefined}
+                      title={`${UPGRADES[i].label}: ${UPGRADES[i].desc} (собрано ${s.prog}/3)`}
+                    >
+                      {"◆".repeat(s.prog)}
+                      {"◇".repeat(Math.max(0, 3 - s.prog))}
+                    </span>
                   )}
                 </span>
               </div>
@@ -244,7 +251,20 @@ export function Hud({
                 {s.owned ? (
                   <>
                     {s.mag}
-                    <span className="text-[11px] text-[#7fae72]"> / {s.infinite ? "∞" : s.reserve}</span>
+                    <span
+                      className={`text-[11px] ${
+                        s.infinite
+                          ? "text-[#7fae72]"
+                          : s.reserve <= 0
+                            ? "text-[#ff5040]"
+                            : s.cap > 0 && s.reserve / s.cap < 0.25
+                              ? "text-[#ff9a3d] anim-lowhp"
+                              : "text-[#7fae72]"
+                      }`}
+                    >
+                      {" "}
+                      / {s.infinite ? "∞" : s.reserve}
+                    </span>
                   </>
                 ) : (
                   <span className="text-[11px]">ящик с оружием</span>

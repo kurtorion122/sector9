@@ -22,19 +22,22 @@ export interface WeaponDef {
 }
 
 export const WEAPONS: WeaponDef[] = [
-  { name: "ПМ «ГРОМ»", dmg: 26, rate: 0.26, speed: 980, spread: 0.035, pellets: 1, magSize: 12, reload: 0.85, cap: 999999, startReserve: 999999, kick: 3, len: 16, range: 1050 },
-  { name: "«ВЕПРЬ-12»", dmg: 13, rate: 0.82, speed: 830, spread: 0.3, pellets: 7, magSize: 6, reload: 1.8, cap: 48, startReserve: 24, kick: 9, len: 22, range: 700 },
-  { name: "«ШКВАЛ»", dmg: 13, rate: 0.0713, speed: 1040, spread: 0.1, pellets: 1, magSize: 34, reload: 1.5, cap: 204, startReserve: 102, kick: 2.2, len: 20, range: 1000 },
-  { name: "«ФИЛИН»", dmg: 52, rate: 0.58, speed: 1560, spread: 0.014, pellets: 1, magSize: 8, reload: 1.6, cap: 64, startReserve: 32, kick: 6, len: 26, range: 1400 },
+  { name: "ПМ «ГРОМ»", dmg: 40, rate: 0.28, speed: 980, spread: 0.078, pellets: 1, magSize: 12, reload: 0.85, cap: 999999, startReserve: 999999, kick: 6, len: 16, range: 1050 },
+  { name: "«ВЕПРЬ-12»", dmg: 13, rate: 0.82, speed: 830, spread: 0.3, pellets: 7, magSize: 6, reload: 1.8, cap: 30, startReserve: 12, kick: 9, len: 22, range: 700 },
+  { name: "«ШКВАЛ»", dmg: 13, rate: 0.0713, speed: 1040, spread: 0.1, pellets: 1, magSize: 34, reload: 1.5, cap: 90, startReserve: 45, kick: 2.2, len: 20, range: 1000 },
+  { name: "«ФИЛИН»", dmg: 52, rate: 0.58, speed: 1560, spread: 0.014, pellets: 1, magSize: 8, reload: 1.6, cap: 24, startReserve: 12, kick: 6, len: 26, range: 1400 },
 ];
 
 export interface UpgradeDef { label: string; desc: string; }
 export const UPGRADES: UpgradeDef[] = [
-  { label: "КАЛИБР+", desc: "урон ×1.7 · темп +25% · разброс выше" },
-  { label: "ЧОК", desc: "разброс ×0.7 · дальность ×0.6 · точный" },
-  { label: "МАГАЗИН+", desc: "магазин 50 · темп выше · урон +2" },
-  { label: "ОПТИКА+", desc: "урон ×2 · лазер · прошивает 2 врагов" },
+  { label: "КАЛИБР+", desc: "3 фрагмента → урон ×1.7 · темп +25% · разброс выше" },
+  { label: "ЧОК", desc: "3 фрагмента → разброс ×0.7 · дальность ×0.6 · точный" },
+  { label: "МАГАЗИН+", desc: "3 фрагмента → магазин 50 · темп выше · урон +2" },
+  { label: "ОПТИКА+", desc: "3 фрагмента → урон ×2 · лазер · прошивает 2 врагов" },
 ];
+
+/** фрагментов нужно для полного улучшения оружия */
+export const UPGRADE_STAGES = 3;
 
 export interface WeaponStats extends WeaponDef { pierce: number; }
 
@@ -124,6 +127,7 @@ export interface PlayerSnap {
   dead: boolean; reload: number;
   buffs: BuffKind[]; still: number;
   mag: number; reserve: number;
+  prog: number[];
   stacks: [string, number][];
   ubMask: number; ubIdx: number; ubCool: number[];
   ubFlame: number; ubCold: number;

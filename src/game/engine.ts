@@ -6,7 +6,7 @@ import {
 import {
   AURAS, AuraKind, BOTS, BOSSES, BossDef, BuffKind, BUFFS, BUFF_KINDS,
   DEBUFFS, DebuffKind, FxEvent, PickupKind, PLAYER_COLORS, PlayerSnap,
-  Snap, UPGRADES, WEAPONS, weaponStats,
+  Snap, UPGRADES, UPGRADE_STAGES, WEAPONS, weaponStats,
 } from "./defs";
 import { NetClient } from "./net";
 import {
@@ -19,8 +19,8 @@ import { angleOff, lightningPath, nearestOther, rollCrit } from "./mechanics";
 export type Phase = "menu" | "playing" | "paused" | "over";
 
 export interface HudSlot {
-  name: string; mag: number; reserve: number; reload: number;
-  owned: boolean; infinite: boolean; upgraded: boolean;
+  name: string; mag: number; reserve: number; cap: number; reload: number;
+  owned: boolean; infinite: boolean; upgraded: boolean; prog: number;
 }
 export interface HudData {
   hp: number; armor: number; wave: number; left: number;
@@ -56,6 +56,7 @@ interface PlayerEnt {
   hp: number; armor: number; aim: number; r: number;
   dead: boolean; isRemote: boolean;
   wi: number; owned: boolean[]; mags: number[]; reserves: number[]; upgraded: boolean[];
+  upgradeProg: number[]; // 0..3 фрагментов на каждое оружие
   reloadT: number; fireCool: number; switchCool: number; recoil: number;
   dashCool: number; lastHurt: number; hurtFx: number;
   buffs: Record<BuffKind, number>;
@@ -501,6 +502,7 @@ export class Game {
       mags: [WEAPONS[0].magSize, 0, 0, 0],
       reserves: [999999, 0, 0, 0],
       upgraded: [false, false, false, false],
+      upgradeProg: [0, 0, 0, 0],
       reloadT: -1, fireCool: 0, switchCool: 0, recoil: 0,
       dashCool: 0, lastHurt: -99, hurtFx: 0,
       buffs: { firerate: 0, precision: 0, swift: 0, invuln: 0 },
@@ -1448,7 +1450,8 @@ export class Game {
         this.sfxIfMe(ent, "pickup");
         break;
       case 1:
-        for (let i = 1; i < 4; i++) if (ent.owned[i]) ent.reserves[i] = Math.min(WEAPONS[i].cap, ent.reserves[i] + Math.round(WEAPONS[i].cap * 0.35));
+        // скудное пополнение — патроны в дефиците
+        for (let i = 1; i < 4; i++) if (ent.owned[i]) ent.reserves[i] = Math.min(WEAPONS[i].cap, ent.reserves[i] + Math.round(WEAPONS[i].cap * 0.18));
         this.floaters.push({ x: pk.x, y: pk.y - 14, txt: "ПАТРОНЫ +", color: "#ffb020", t: 0.9, max: 0.9, size: 14 });
         this.sfxIfMe(ent, "pickup");
         break;
@@ -1474,14 +1477,24 @@ export class Game {
         break;
       }
       case 5: {
-        // upgrade current weapon if possible, else first owned un-upgraded
+        // улучшение собирается из 3 фрагментов: сначала текущее оружие, потом первое неготовое
         let target = -1;
-        if (!ent.upgraded[ent.wi] && ent.owned[ent.wi]) target = ent.wi;
-        else for (let i = 0; i < 4; i++) if (ent.owned[i] && !ent.upgraded[i]) { target = i; break; }
+        if (ent.owned[ent.wi] && ent.upgradeProg[ent.wi] < UPGRADE_STAGES) target = ent.wi;
+        else for (let i = 0; i < 4; i++) if (ent.owned[i] && ent.upgradeProg[i] < UPGRADE_STAGES) { target = i; break; }
         if (target >= 0) {
-          ent.upgraded[target] = true;
-          this.floaters.push({ x: pk.x, y: pk.y - 14, txt: `${WEAPONS[target].name} · ${UPGRADES[target].label}`, color: "#c07aff", t: 1.4, max: 1.4, size: 14 });
-          this.sfxIfMe(ent, "upgrade");
+          ent.upgradeProg[target]++;
+          const st = ent.upgradeProg[target];
+          if (st >= UPGRADE_STAGES) {
+            ent.upgraded[target] = true;
+            this.floaters.push({ x: pk.x, y: pk.y - 14, txt: `${UPGRADES[target].label} ГОТОВ`, color: "#c07aff", t: 1.5, max: 1.5, size: 16 });
+            this.queueFx({ k: "float", x: pk.x, y: pk.y - 14, txt: `${UPGRADES[target].label} ГОТОВ`, color: "#c07aff", size: 16 });
+            this.burst(pk.x, pk.y, 22, "#c07aff", 220);
+            this.queueFx({ k: "burst", x: pk.x, y: pk.y, n: 22, color: "#c07aff", speed: 220 });
+            this.sfxIfMe(ent, "upgrade");
+          } else {
+            this.floaters.push({ x: pk.x, y: pk.y - 14, txt: `ФРАГМЕНТ ${st}/${UPGRADE_STAGES} · ${UPGRADES[target].label}`, color: "#9a7fd0", t: 1.1, max: 1.1, size: 13 });
+            this.sfxIfMe(ent, "buffUp1");
+          }
         } else {
           this.score += 250;
           this.floaters.push({ x: pk.x, y: pk.y - 14, txt: "ВСЁ УЛУЧШЕНО +250", color: "#c07aff", t: 1, max: 1, size: 13 });
@@ -1719,7 +1732,7 @@ export class Game {
       const bonus = 200 + this.wave * 50;
       this.score += bonus;
       for (const ent of this.players) if (!ent.dead) ent.hp = Math.min(ent.stats.maxHp, ent.hp + 18);
-      for (const ent of this.players) for (let i = 1; i < 4; i++) if (ent.owned[i]) ent.reserves[i] = Math.min(WEAPONS[i].cap, ent.reserves[i] + Math.round(WEAPONS[i].cap * 0.3));
+      for (const ent of this.players) for (let i = 1; i < 4; i++) if (ent.owned[i]) ent.reserves[i] = Math.min(WEAPONS[i].cap, ent.reserves[i] + Math.round(WEAPONS[i].cap * 0.15));
       this.cbs.onBanner("СЕКТОР ЗАЧИЩЕН", `бонус +${bonus} · аптечка и патроны пополнены`);
       this.sfx("pickup");
       this.betweenT = 3.2;
@@ -1886,6 +1899,9 @@ export class Game {
       ent.ubCool = ps.ubCool;
       ent.ubFlame = ps.ubFlame;
       ent.ubCold = ps.ubCold;
+      // прогресс улучшений: 3 фрагмента = готово
+      ent.upgradeProg = ps.prog.slice();
+      for (let i = 0; i < 4; i++) ent.upgraded[i] = ent.upgradeProg[i] >= UPGRADE_STAGES;
 
       if (ent === this.me) {
         // keep local x/y/aim; take authoritative vitals
@@ -1960,6 +1976,7 @@ export class Game {
         buffs: BUFF_KINDS.filter((k) => p.buffs[k] > 0),
         still: p.stillT,
         mag: p.mags[p.wi], reserve: p.wi === 0 ? -1 : p.reserves[p.wi],
+        prog: p.upgradeProg.slice(),
         stacks: Object.entries(p.stacks).filter(([, n]) => n > 0) as [string, number][],
         ubMask: p.ubOwned.reduce((m, o, i) => m | (o ? 1 << i : 0), 0),
         ubIdx: p.ubIdx,
@@ -2229,6 +2246,13 @@ export class Game {
             const shooter = this.players.find((p) => p.id === bl.owner);
             if (shooter) this.tryChain(shooter, b, bl.dmg);
             this.damageBot(b, bl.dmg, bl.kind, bl.crit === true, bl.owner);
+            // отдача попадания: импульс пули толкает врага (боссы тяжелее)
+            const bsp = Math.hypot(bl.vx, bl.vy);
+            if (bsp > 0) {
+              const imp = Math.min(260, bl.dmg * 3.2) * (bl.crit ? 1.4 : 1) * (b.kind === 3 ? 0.22 : 1);
+              b.vx += (bl.vx / bsp) * imp;
+              b.vy += (bl.vy / bsp) * imp;
+            }
             if ((bl.pierce ?? 0) > 0) {
               bl.pierce = (bl.pierce ?? 0) - 1;
               if (!bl.hitIds) bl.hitIds = [];
@@ -3193,10 +3217,12 @@ export class Game {
       name: w.name,
       mag: this.me.mags[i],
       reserve: i === 0 ? -1 : this.me.reserves[i],
+      cap: i === 0 ? -1 : w.cap,
       reload: this.me.reloadT >= 0 && this.me.wi === i ? clamp(this.me.reloadT, 0, 1) : -1,
       owned: this.me.owned[i],
       infinite: i === 0,
       upgraded: this.me.upgraded[i],
+      prog: this.me.upgradeProg[i],
     }));
     const bossBot = this.bots.find((b) => b.kind === 3);
     const boss = bossBot
