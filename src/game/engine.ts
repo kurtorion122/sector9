@@ -88,6 +88,9 @@ interface Bot {
   burn: number; burnDps: number; burnSrc: number;  // DoT горения
   slow: number;                                    // замедление конусом холода
   lastSrc: number;                                 // кто нанёс последний урон (для вампиризма)
+  auraPulse: number;                               // огибающая пика активности 0..1
+  auraNext: number;                                // сек до следующего пика
+  auraMul: number;                                 // текущий множитель радиуса ауры
 }
 
 interface Bullet {
@@ -341,6 +344,7 @@ export class Game {
       case "empty": a.empty(); break;
       case "zap": a.zap(dist); break;
       case "flame": a.flame(dist); break;
+      case "auraSpike": a.auraSpike(dist); break;
       default: {
         if (id.startsWith("shot")) a.shot(parseInt(id.slice(4), 10) || 0, dist);
         else if (id.startsWith("reload")) a.reload(parseInt(id.slice(6), 10) || 0);
@@ -784,6 +788,7 @@ export class Game {
       cool: 1 + Math.random(), strafe: Math.random() < 0.5 ? 1 : -1, strafeT: 1 + Math.random() * 2,
       flash: 0, spawnT: 0, lunge: 0, weak: -1, aura: "", auraR: 0,
       burn: 0, burnDps: 0, burnSrc: -1, slow: 0, lastSrc: -1,
+      auraPulse: 0, auraNext: 0, auraMul: 1,
     });
     this.burst(x, y, 8, "#5a7d52", 90);
   }
@@ -799,6 +804,7 @@ export class Game {
       cool: 1.2, strafe: 1, strafeT: 2,
       flash: 0, spawnT: 0, lunge: 0, weak: bd.weak, aura: bd.aura, auraR: bd.auraR,
       burn: 0, burnDps: 0, burnSrc: -1, slow: 0, lastSrc: -1,
+      auraPulse: 0, auraNext: 1.6 + Math.random() * 1.6, auraMul: 1,
     });
     this.flashes.push({ x, y, r: 120, t: 0.5, max: 0.5, color: AURAS[bd.aura].color });
     this.burst(x, y, 30, AURAS[bd.aura].color, 260);
@@ -1967,6 +1973,7 @@ export class Game {
         dir: b.dir, state: b.state, flash: b.flash, weak: b.weak, aura: b.aura, spawnT: b.spawnT,
         seenX: Math.round(b.seenX), seenY: Math.round(b.seenY),
         burn: b.burn > 0, slow: b.slow > 0,
+        auraMul: Math.round(b.auraMul * 100) / 100,
       })),
       bullets: this.bullets.map((bl) => ({
         id: bl.id, x: Math.round(bl.x), y: Math.round(bl.y), px: Math.round(bl.px), py: Math.round(bl.py),
@@ -2118,24 +2125,46 @@ export class Game {
   }
 
   private applyBossAura(b: Bot, bd: BossDef, dt: number) {
+    // --- динамика поля: медленное «дыхание» + внезапные всплески активности ---
+    b.auraNext -= dt;
+    if (b.auraNext <= 0) {
+      // пик: поле резко раздувается, эффекты злее
+      b.auraPulse = 1;
+      b.auraNext = 2.4 + Math.random() * 2.8;
+      const d0 = Math.hypot(b.x - this.me.x, b.y - this.me.y);
+      this.sfx("auraSpike", d0);
+      this.shake = Math.min(20, this.shake + 6);
+      this.queueFx({ k: "shake", v: 4 });
+      this.queueFx({ k: "flash", x: b.x, y: b.y, r: bd.auraR * 1.25, color: AURAS[bd.aura].color });
+      this.flashes.push({ x: b.x, y: b.y, r: bd.auraR * 1.25, t: 0.32, max: 0.32, color: AURAS[bd.aura].color });
+      this.burst(b.x, b.y, 26, AURAS[bd.aura].color, 240);
+      this.queueFx({ k: "burst", x: b.x, y: b.y, n: 26, color: AURAS[bd.aura].color, speed: 240 });
+    }
+    b.auraPulse = Math.max(0, b.auraPulse - dt * 0.85); // всплеск откатывается ~1.2 с
+    b.auraMul = (1 + 0.1 * Math.sin(this.time * 2.2 + b.id * 1.7)) * (1 + 0.5 * b.auraPulse);
+
+    const R = bd.auraR * b.auraMul;
+    const intensity = 1 + 0.9 * b.auraPulse; // на пике урон/тяга почти вдвое выше
+
     const auraColor = AURAS[bd.aura].color;
     for (const p of this.players) {
       if (p.dead) continue;
       const d = Math.hypot(p.x - b.x, p.y - b.y);
-      if (d > bd.auraR) continue;
+      if (d > R) continue;
       if (bd.aura === "slow") {
-        p.vx *= Math.exp(-3.2 * dt);
-        p.vy *= Math.exp(-3.2 * dt);
+        const f = Math.exp(-(2.6 + 2.8 * b.auraPulse) * dt);
+        p.vx *= f;
+        p.vy *= f;
       } else if (bd.aura === "burn") {
         (p as PlayerEnt & { burnAcc?: number }).burnAcc = ((p as PlayerEnt & { burnAcc?: number }).burnAcc ?? 0) + dt;
         if ((p as PlayerEnt & { burnAcc?: number }).burnAcc! >= 0.5) {
           (p as PlayerEnt & { burnAcc?: number }).burnAcc = 0;
-          this.damageEnt(p, 6, b.x, b.y);
+          this.damageEnt(p, 6 * intensity, b.x, b.y);
         }
-        if (Math.random() < 0.3) this.burst(p.x, p.y, 1, auraColor, 60);
+        if (Math.random() < 0.3 + 0.4 * b.auraPulse) this.burst(p.x, p.y, 1, auraColor, 60 + 80 * b.auraPulse);
       } else if (bd.aura === "vortex") {
         const a = Math.atan2(b.y - p.y, b.x - p.x);
-        const pull = 340 * (1 - d / bd.auraR);
+        const pull = 340 * intensity * (1 - d / R);
         p.vx += Math.cos(a) * pull * dt * 4;
         p.vy += Math.sin(a) * pull * dt * 4;
       }
@@ -2503,20 +2532,9 @@ export class Game {
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
 
-    // boss aura rings (above fog, subtle)
+    // boss auras — heavy, breathing fields with activity spikes
     for (const b of this.bots) {
-      if (b.kind === 3 && b.aura && b.auraR > 0) {
-        const ad = AURAS[b.aura as AuraKind];
-        ctx.globalAlpha = 0.16 + 0.06 * Math.sin(this.time * 4);
-        ctx.strokeStyle = ad.color;
-        ctx.lineWidth = 2.5;
-        ctx.setLineDash([10, 8]);
-        ctx.beginPath();
-        ctx.arc(b.x, b.y, b.auraR, this.time * 0.6, this.time * 0.6 + TAU);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.globalAlpha = 1;
-      }
+      if (b.kind === 3 && b.aura && b.auraR > 0) this.drawBossAura(ctx, b);
     }
 
     // аура горения игрока
@@ -2648,6 +2666,116 @@ export class Game {
     if (this.phase === "playing" && this.me && !this.me.dead) this.drawCrosshair(ctx);
 
     this.drawMinimap();
+  }
+
+  /** «тяжёлое» энергетическое поле босса: дышит, вспыхивает, несёт обломки */
+  private drawBossAura(ctx: CanvasRenderingContext2D, b: Bot) {
+    const ad = AURAS[(b.aura || "burn") as AuraKind];
+    const col = ad.color;
+    const mul = b.auraMul || 1;
+    const R = b.auraR * mul;
+    const t = this.time;
+    const pk = clamp((mul - 1) / 0.6, 0, 1); // 0 — покой, 1 — пик всплеска
+    const jit = 1.6 * pk;                      // дрожание центра на пике
+    const cx = b.x + (Math.random() - 0.5) * jit;
+    const cy = b.y + (Math.random() - 0.5) * jit;
+
+    // 1. объём поля: плотное свечение, сгущающееся к краю (вес)
+    ctx.globalCompositeOperation = "lighter";
+    const g = ctx.createRadialGradient(cx, cy, R * 0.15, cx, cy, R);
+    g.addColorStop(0, "rgba(0,0,0,0)");
+    g.addColorStop(0.72, this.rgba(col, 0.05 + 0.05 * pk));
+    g.addColorStop(0.95, this.rgba(col, 0.16 + 0.22 * pk));
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, TAU);
+    ctx.fill();
+
+    // медленно вращающиеся «массы» внутри поля
+    for (let i = 0; i < 4; i++) {
+      const a = t * (0.25 + i * 0.07) * (i % 2 ? -1 : 1) + i * 1.9;
+      const bx = cx + Math.cos(a) * R * 0.45;
+      const by = cy + Math.sin(a) * R * 0.45;
+      const br = R * 0.34;
+      const bg = ctx.createRadialGradient(bx, by, 0, bx, by, br);
+      bg.addColorStop(0, this.rgba(col, 0.06 + 0.05 * pk));
+      bg.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = bg;
+      ctx.beginPath();
+      ctx.arc(bx, by, br, 0, TAU);
+      ctx.fill();
+    }
+
+    // 2. границы поля — «живые» волнистые контуры
+    this.wavyRing(ctx, cx, cy, R, t * 1.4 + b.id, 0.035 + 0.02 * pk, 5, 7 + 3 * pk, this.rgba(col, 0.1 + 0.14 * pk));
+    this.wavyRing(ctx, cx, cy, R, -t * 2.1 + b.id * 2, 0.02, 9, 3.4, this.rgba(col, 0.5 + 0.35 * pk));
+    this.wavyRing(ctx, cx, cy, R * 0.985, -t * 2.1 + b.id * 2 + 0.3, 0.02, 9, 1.6, "rgba(255,255,255," + (0.22 + 0.3 * pk).toFixed(3) + ")");
+
+    // 3. вращающийся пунктирный лимб (преемственность со старой аурой)
+    ctx.globalAlpha = 0.3 + 0.3 * pk;
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([10, 8]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, R * 0.86, t * 0.6, t * 0.6 + TAU);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 4. орбитальные обломки — придают полю массу
+    for (let i = 0; i < 11; i++) {
+      const spd = (0.35 + ((i * 53) % 40) / 55) * (i % 2 ? 1 : -1);
+      const a = t * spd + i * 2.39996;
+      const rr = R * (0.55 + 0.42 * ((i * 37) % 10) / 10);
+      const px = cx + Math.cos(a) * rr;
+      const py = cy + Math.sin(a) * rr;
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(a * 1.7);
+      ctx.globalAlpha = 0.5 + 0.4 * pk;
+      ctx.fillStyle = col;
+      const s = 2 + ((i * 29) % 10) / 4 + 2 * pk;
+      ctx.fillRect(-s / 2, -s / 2, s, s);
+      ctx.restore();
+    }
+
+    // 5. ударное кольцо в момент всплеска
+    if (pk > 0.05) {
+      ctx.globalAlpha = pk * 0.55;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2 + 10 * pk;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R * (1.02 + 0.05 * (1 - pk)), 0, TAU);
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+  }
+
+  /** замкнутый контур с бегущей волной по радиусу */
+  private wavyRing(ctx: CanvasRenderingContext2D, cx: number, cy: number, R: number, phase: number, amp: number, lobes: number, lw: number, style: string) {
+    ctx.strokeStyle = style;
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    const steps = 52;
+    for (let i = 0; i <= steps; i++) {
+      const a = (i / steps) * TAU;
+      const rr = R * (1 + amp * Math.sin(a * lobes + phase) + amp * 0.5 * Math.sin(a * (lobes * 2 + 1) - phase * 1.7));
+      const x = cx + Math.cos(a) * rr;
+      const y = cy + Math.sin(a) * rr;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  /** hex-цвет -> rgba() с заданной альфой */
+  private rgba(hex: string, alpha: number) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const gch = parseInt(hex.slice(3, 5), 16);
+    const bch = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r},${gch},${bch},${alpha.toFixed(3)})`;
   }
 
   private drawPickup(ctx: CanvasRenderingContext2D, pk: Pickup) {

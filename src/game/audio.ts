@@ -178,6 +178,13 @@ export class AudioSys {
     this.tone("sawtooth", 110, 30, 0.5, 0.4 * v);
     this.noise(0.6, 0.5 * v, 260, 0.5, "lowpass");
   }
+  auraSpike(dist = 0) {
+    const v = this.att(dist);
+    if (v <= 0.01) return;
+    this.tone("sine", 70, 34, 0.5, 0.5 * v);
+    this.tone("sine", 140, 52, 0.4, 0.24 * v, 0.02);
+    this.noise(0.35, 0.14 * v, 140, 0.5, "lowpass");
+  }
 
   /* -------- пассивные баффы (по редкости), подстволы, молния -------- */
 

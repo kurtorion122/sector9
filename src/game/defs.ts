@@ -135,6 +135,7 @@ export interface BotSnap {
   dir: number; state: number; flash: number; weak: number; aura: string; spawnT: number;
   seenX: number; seenY: number;
   burn: boolean; slow: boolean;
+  auraMul: number;
 }
 
 export interface BulletSnap {
