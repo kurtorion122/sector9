@@ -1,5 +1,6 @@
 import { RefObject } from "react";
 import { HudData, Phase } from "../game/engine";
+import { BUFFS, DEBUFFS, PLAYER_COLORS, UPGRADES } from "../game/defs";
 
 const fmtTime = (t: number) => {
   const m = Math.floor(t / 60);
@@ -38,6 +39,12 @@ const IconSound = ({ muted }: { muted: boolean }) => (
   </svg>
 );
 
+const FoeChip = ({ label, color }: { label: string; color: string }) => (
+  <span className="font-display text-[9px] tracking-wider px-2 py-1 border anim-blink" style={{ color, borderColor: color + "80", background: "rgba(40,8,6,0.6)" }}>
+    ⚠ {label}
+  </span>
+);
+
 /* ---------------- HUD ---------------- */
 
 export function Hud({
@@ -52,9 +59,10 @@ export function Hud({
   minimapRef: RefObject<HTMLCanvasElement>;
 }) {
   const hud: HudData = hudIn ?? {
-    hp: 100, wave: 0, left: 0, score: 0, best: 0, newBest: false, kills: 0, wi: 0,
-    slots: [0, 1, 2, 3].map((i) => ({ name: "", mag: 0, reserve: 0, reload: -1, owned: i === 0, infinite: i === 0 })),
+    hp: 100, armor: 0, wave: 0, left: 0, score: 0, best: 0, newBest: false, kills: 0, wi: 0,
+    slots: [0, 1, 2, 3].map((i) => ({ name: "", mag: 0, reserve: 0, reload: -1, owned: i === 0, infinite: i === 0, upgraded: false })),
     dash: 1, time: 0,
+    buffs: [], foeMods: { hp: 1, dmg: 1, spd: 1 }, still: 0, boss: null, players: [], meDead: false, netMode: "solo",
   };
   const visible = (phase === "playing" || phase === "paused") && hudIn !== null;
   const lowHp = hud.hp < 32;
@@ -82,6 +90,15 @@ export function Hud({
             {hud.hp}
           </span>
         </div>
+        {hud.armor > 0 && (
+          <div className="flex items-center gap-2 mt-1.5">
+            <span className="font-display text-[9px] tracking-widest text-[#5fd8d0] w-4">▣</span>
+            <div className="flex-1 h-1.5 bg-black/70 border border-[#1e3a38] overflow-hidden">
+              <div className="h-full bg-[#5fd8d0] transition-[width] duration-150" style={{ width: `${hud.armor}%`, boxShadow: "0 0 8px rgba(95,216,208,0.7)" }} />
+            </div>
+            <span className="font-display text-[9px] tracking-widest text-[#4f8f8a] tabular-nums">{hud.armor}</span>
+          </div>
+        )}
         <div className="flex items-center gap-2 mt-2">
           <span className="text-[#5fd8d0]"><IconBolt /></span>
           <div className="flex-1 h-1.5 bg-black/70 border border-[#1e3a38] overflow-hidden">
@@ -94,8 +111,66 @@ export function Hud({
         </div>
       </div>
 
-      {/* top-center: score & wave */}
+      {/* left column under vitals: active buffs / debuffs + squad */}
+      <div className="absolute top-[132px] left-4 flex flex-col gap-2 w-[230px]">
+        {(hud.buffs.length > 0 || hud.still > 0 || hud.foeMods.hp > 1 || hud.foeMods.dmg > 1 || hud.foeMods.spd > 1) && (
+          <div className="flex flex-wrap gap-1.5">
+            {hud.buffs.map((b) => (
+              <span
+                key={b.kind}
+                className="font-display text-[9px] tracking-wider px-2 py-1 border tabular-nums"
+                style={{ color: BUFFS[b.kind].color, borderColor: BUFFS[b.kind].color + "80", background: "rgba(0,0,0,0.55)", boxShadow: `0 0 8px ${BUFFS[b.kind].color}33` }}
+              >
+                {BUFFS[b.kind].name} {Math.ceil(b.left)}
+              </span>
+            ))}
+            {hud.still > 0 && (
+              <span className="font-display text-[9px] tracking-wider px-2 py-1 border anim-blink" style={{ color: DEBUFFS.still.color, borderColor: DEBUFFS.still.color + "80", background: "rgba(0,0,0,0.55)" }}>
+                {DEBUFFS.still.name} {Math.ceil(hud.still)}
+              </span>
+            )}
+            {hud.foeMods.hp > 1 && <FoeChip label="ВРАГИ КРЕПЧЕ" color={DEBUFFS.foeHp.color} />}
+            {hud.foeMods.dmg > 1 && <FoeChip label="ВРАГИ ЗЛЕЕ" color={DEBUFFS.foeDmg.color} />}
+            {hud.foeMods.spd > 1 && <FoeChip label="ВРАГИ БЫСТРЕЕ" color={DEBUFFS.foeSpd.color} />}
+          </div>
+        )}
+        {hud.players.length > 1 && (
+          <div className="panel px-3 py-2 flex flex-col gap-1.5">
+            <div className="font-display text-[9px] tracking-[0.24em] text-[#7fae72]">ОТРЯД</div>
+            {hud.players.map((p, i) => (
+              <div key={i} className={`flex items-center gap-2 ${p.dead ? "opacity-40" : ""}`}>
+                <span className="w-2 h-2 rounded-full" style={{ background: PLAYER_COLORS[p.colorIdx % PLAYER_COLORS.length] }} />
+                <span className="font-display text-[10px] tracking-wider text-[#d7ffb0] truncate">{p.name}{p.me ? " (вы)" : ""}</span>
+                <span className={`ml-auto font-display text-[10px] tabular-nums ${p.dead ? "text-[#ff5040]" : "text-[#9dbb95]"}`}>{p.dead ? "✕" : p.hp}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* top-center: boss bar, score & wave */}
       <div className="absolute top-4 left-1/2 -translate-x-1/2 flex flex-col items-center">
+        {hud.boss && (
+          <div className="panel px-5 py-2 mb-2 w-[420px]" style={{ borderColor: "#7a2540" }}>
+            <div className="flex items-baseline justify-between mb-1">
+              <span className="font-display text-[12px] tracking-[0.2em] text-[#ff6a5e]">{hud.boss.name}</span>
+              <span className="font-display text-[9px] tracking-wider text-[#a58340]">
+                {hud.boss.auraName && <span className="text-[#c07aff]">{hud.boss.auraName} · </span>}
+                уязвим: {hud.boss.weakName}
+              </span>
+            </div>
+            <div className="h-2.5 bg-black/70 border border-[#5c1f2e] overflow-hidden">
+              <div
+                className="h-full transition-[width] duration-150"
+                style={{
+                  width: `${(hud.boss.hp / hud.boss.maxHp) * 100}%`,
+                  background: "linear-gradient(90deg, #e8342e, #ff6a2e)",
+                  boxShadow: "0 0 12px rgba(232,52,46,0.8)",
+                }}
+              />
+            </div>
+          </div>
+        )}
         <div className="panel panel-amber px-6 py-2 text-center">
           <div className="font-display text-[9px] tracking-[0.3em] text-[#a58340]">СЧЁТ</div>
           <div className="font-display text-3xl leading-none text-[#ffb020] text-glow-amber tabular-nums">
@@ -146,6 +221,9 @@ export function Hud({
                 </span>
                 <span className={`font-display text-[10px] tracking-wider truncate ml-2 ${active ? "text-[#d7ffb0]" : "text-[#7fae72]"}`}>
                   {s.owned ? s.name : "— НЕТ —"}
+                  {s.owned && s.upgraded && (
+                    <span className="text-[#c07aff] ml-1.5" title={UPGRADES[i].label + ": " + UPGRADES[i].desc}>◆</span>
+                  )}
                 </span>
               </div>
               <div className={`font-display text-lg leading-tight tabular-nums ${active ? "text-white" : "text-[#9dbb95]"}`}>
@@ -171,6 +249,14 @@ export function Hud({
           );
         })}
       </div>
+
+      {/* fallen notice (MP spectator) */}
+      {phase === "playing" && hud.meDead && (
+        <div className="absolute inset-x-0 bottom-[26%] flex flex-col items-center pointer-events-none">
+          <div className="font-display text-3xl text-[#ff5040] text-glow-red tracking-[0.2em]">ВЫ ПАЛИ</div>
+          <div className="text-[12px] tracking-[0.28em] text-[#a58a85] mt-2 uppercase">наблюдение за отрядом · ждите конца операции</div>
+        </div>
+      )}
 
       {/* bottom-left: hints */}
       {phase === "playing" && (
@@ -234,7 +320,7 @@ const ARMS = [
 
 /* ---------------- Screens ---------------- */
 
-export function StartScreen({ onStart, best }: { onStart: () => void; best: number }) {
+export function StartScreen({ onStart, onMulti, best }: { onStart: () => void; onMulti: () => void; best: number }) {
   return (
     <div className="absolute inset-0 anim-screen scanlines overflow-y-auto" style={{ background: "radial-gradient(ellipse at 30% 20%, rgba(20,40,25,0.55), rgba(4,7,5,0.82) 70%)" }}>
       <div className="min-h-full flex items-center justify-center p-6">
@@ -256,16 +342,23 @@ export function StartScreen({ onStart, best }: { onStart: () => void; best: numb
               Всё остальное прячется в тумане: стены, аптечки и боты, которые уже вас услышали.
               Зачищайте волну за волной, подбирайте оружие и не дайте себя окружить.
             </p>
-            <div className="flex items-center gap-4 mt-7">
+            <div className="flex items-center gap-3 mt-7 flex-wrap">
               <button
                 onClick={onStart}
-                className="btn-tac pointer-events-auto bg-[#a8ff3e] text-[#0c1408] text-lg px-10 py-4 hover:bg-[#c0ff66]"
+                className="btn-tac pointer-events-auto bg-[#a8ff3e] text-[#0c1408] text-lg px-8 py-4 hover:bg-[#c0ff66]"
                 style={{ boxShadow: "0 0 28px rgba(168,255,62,0.35)" }}
               >
-                НАЧАТЬ ОПЕРАЦИЮ
+                ОДИНОЧНАЯ
+              </button>
+              <button
+                onClick={onMulti}
+                className="btn-tac pointer-events-auto border-2 border-[#5fd8d0] text-[#5fd8d0] text-lg px-8 py-[14px] hover:bg-[#5fd8d0] hover:text-[#062321] transition-colors"
+                style={{ boxShadow: "0 0 20px rgba(95,216,208,0.2)" }}
+              >
+                ОТРЯД · ДО 4
               </button>
               {best > 0 && (
-                <div className="text-[#a58340] font-display text-sm tracking-wider">
+                <div className="text-[#a58340] font-display text-sm tracking-wider ml-1">
                   РЕКОРД<br />
                   <span className="text-[#ffb020] text-xl">{best.toLocaleString("ru-RU")}</span>
                 </div>

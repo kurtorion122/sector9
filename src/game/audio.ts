@@ -137,4 +137,45 @@ export class AudioSys {
   empty() {
     this.tone("square", 240, 180, 0.05, 0.1);
   }
+  buff() {
+    this.tone("sine", 420, 880, 0.1, 0.18);
+    this.tone("sine", 660, 1320, 0.12, 0.14, 0.08);
+  }
+  debuff() {
+    this.tone("sawtooth", 320, 120, 0.2, 0.2);
+    this.tone("sawtooth", 220, 90, 0.2, 0.14, 0.05);
+  }
+  surprise() {
+    this.tone("square", 500, 500, 0.06, 0.14);
+    this.tone("square", 380, 380, 0.06, 0.14, 0.08);
+    this.tone("square", 700, 700, 0.1, 0.16, 0.16);
+  }
+  armor() {
+    this.tone("square", 240, 240, 0.08, 0.16);
+    this.tone("square", 360, 360, 0.1, 0.14, 0.09);
+  }
+  upgrade() {
+    this.tone("square", 400, 400, 0.06, 0.15);
+    this.tone("square", 600, 600, 0.06, 0.15, 0.07);
+    this.tone("square", 900, 900, 0.12, 0.18, 0.14);
+  }
+  boss(dist = 0) {
+    const v = this.att(dist);
+    if (v <= 0.01) return;
+    this.tone("sawtooth", 90, 40, 0.5, 0.35 * v);
+    this.tone("sawtooth", 60, 30, 0.6, 0.3 * v, 0.1);
+    this.noise(0.6, 0.3 * v, 180, 0.5, "lowpass");
+  }
+  rocket(dist = 0) {
+    const v = this.att(dist);
+    if (v <= 0.01) return;
+    this.tone("sawtooth", 900, 200, 0.35, 0.22 * v);
+    this.noise(0.4, 0.3 * v, 700, 0.6, "highpass");
+  }
+  explosion(dist = 0) {
+    const v = this.att(dist);
+    if (v <= 0.01) return;
+    this.tone("sawtooth", 110, 30, 0.5, 0.4 * v);
+    this.noise(0.6, 0.5 * v, 260, 0.5, "lowpass");
+  }
 }

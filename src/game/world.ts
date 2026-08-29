@@ -39,8 +39,17 @@ export interface WorldData {
   crateSpots: { x: number; y: number }[];
 }
 
-export function generateWorld(seed: number): WorldData {
+export interface WorldOpts {
+  walls?: number;
+  crates?: number;
+  pillars?: number;
+}
+
+export function generateWorld(seed: number, opts: WorldOpts = {}): WorldData {
   const rnd = mulberry(seed);
+  const nWalls = opts.walls ?? 9;
+  const nCrates = opts.crates ?? 16;
+  const nPillars = opts.pillars ?? 5;
   const rects: Rect[] = [];
   const B = 42; // border wall thickness
   rects.push({ x: -B, y: -B, w: MAP_W + 2 * B, h: B });
@@ -67,7 +76,7 @@ export function generateWorld(seed: number): WorldData {
     );
 
   // long walls
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0; i < nWalls; i++) {
     const horiz = rnd() < 0.5;
     const len = 240 + rnd() * 320;
     const th = 36 + rnd() * 14;
