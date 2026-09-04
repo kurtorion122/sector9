@@ -22,10 +22,10 @@ export interface WeaponDef {
 }
 
 export const WEAPONS: WeaponDef[] = [
-  { name: "ПМ «ГРОМ»", dmg: 40, rate: 0.28, speed: 980, spread: 0.078, pellets: 1, magSize: 12, reload: 0.85, cap: 999999, startReserve: 999999, kick: 6, len: 16, range: 1050 },
-  { name: "«ВЕПРЬ-12»", dmg: 13, rate: 0.82, speed: 830, spread: 0.3, pellets: 7, magSize: 6, reload: 1.8, cap: 30, startReserve: 12, kick: 9, len: 22, range: 700 },
-  { name: "«ШКВАЛ»", dmg: 13, rate: 0.0713, speed: 1040, spread: 0.1, pellets: 1, magSize: 34, reload: 1.5, cap: 90, startReserve: 45, kick: 2.2, len: 20, range: 1000 },
-  { name: "«ФИЛИН»", dmg: 52, rate: 0.58, speed: 1560, spread: 0.014, pellets: 1, magSize: 8, reload: 1.6, cap: 24, startReserve: 12, kick: 6, len: 26, range: 1400 },
+  { name: "ПМ «ГРОМ»", dmg: 28, rate: 0.18, speed: 980, spread: 0.09, pellets: 1, magSize: 12, reload: 0.9, cap: 999999, startReserve: 999999, kick: 5, len: 16, range: 900 },
+  { name: "«ВЕПРЬ-12»", dmg: 11, rate: 0.65, speed: 800, spread: 0.42, pellets: 9, magSize: 8, reload: 2.1, cap: 40, startReserve: 16, kick: 11, len: 22, range: 550 },
+  { name: "«ШКВАЛ»", dmg: 15, rate: 0.09, speed: 1050, spread: 0.12, pellets: 1, magSize: 40, reload: 1.7, cap: 120, startReserve: 60, kick: 2.8, len: 20, range: 950 },
+  { name: "«ФИЛИН»", dmg: 68, rate: 0.75, speed: 1600, spread: 0.018, pellets: 1, magSize: 6, reload: 1.9, cap: 30, startReserve: 12, kick: 8, len: 26, range: 1300 },
 ];
 
 export interface UpgradeDef { label: string; desc: string; }
