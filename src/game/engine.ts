@@ -86,6 +86,7 @@ interface Bot {
   cool: number; strafe: number; strafeT: number;
   flash: number; spawnT: number; lunge: number;
   weak: number; aura: AuraKind | ""; auraR: number;
+  weapon: number; speedMul: number; resist: number;
   burn: number; burnDps: number; burnSrc: number;  // DoT горения
   slow: number;                                    // замедление конусом холода
   lastSrc: number;                                 // кто нанёс последний урон (для вампиризма)
@@ -717,7 +718,7 @@ export class Game {
       this.pending.push({ x: p.x, y: p.y, t: 0.5 + i * 0.22, kind: k, boss: -1 });
     });
     if (isBossWave) {
-      const bossIdx = Math.min(BOSSES.length - 1, Math.floor(n / 3) - 1);
+      const bossIdx = Math.floor((n / 3) - 1);
       const p = this.findSpawnPoint();
       this.pending.push({ x: p.x, y: p.y, t: 1.4, kind: 3, boss: bossIdx });
       const bd = BOSSES[bossIdx];
@@ -798,18 +799,26 @@ export class Game {
   private spawnBoss(idx: number, x: number, y: number) {
     const bd = BOSSES[idx];
     const hpMul = (1 + (this.wave - 1) * 0.05) * this.foeHpMul();
+    // рандомизация босса: аура, оружие, скорость, резист к урону
+    const auraKeys = Object.keys(AURAS) as AuraKind[];
+    const randAura = auraKeys[Math.floor(Math.random() * auraKeys.length)];
+    const randWeapon = Math.floor(Math.random() * WEAPONS.length);
+    const speedVar = 0.85 + Math.random() * 0.3; // 0.85..1.15
+    const weakVar = Math.floor(Math.random() * WEAPONS.length);
+    const resistVar = 0.7 + Math.random() * 0.6; // 0.7..1.3 множитель урона
     this.bots.push({
       id: this.botId++, kind: 3, boss: idx, x, y, vx: 0, vy: 0,
       hp: bd.hp * hpMul, maxHp: bd.hp * hpMul, r: bd.r,
       dir: 0, state: 1,
       tx: x, ty: y, lastSeen: this.time, seenX: x, seenY: y,
       cool: 1.2, strafe: 1, strafeT: 2,
-      flash: 0, spawnT: 0, lunge: 0, weak: bd.weak, aura: bd.aura, auraR: bd.auraR,
+      flash: 0, spawnT: 0, lunge: 0, weak: weakVar, aura: randAura, auraR: bd.auraR * (0.9 + Math.random() * 0.2),
+      weapon: randWeapon, speedMul: speedVar, resist: resistVar,
       burn: 0, burnDps: 0, burnSrc: -1, slow: 0, lastSrc: -1,
       auraPulse: 0, auraNext: 1.6 + Math.random() * 1.6, auraMul: 1,
     });
-    this.flashes.push({ x, y, r: 120, t: 0.5, max: 0.5, color: AURAS[bd.aura].color });
-    this.burst(x, y, 30, AURAS[bd.aura].color, 260);
+    this.flashes.push({ x, y, r: 120, t: 0.5, max: 0.5, color: AURAS[randAura].color });
+    this.burst(x, y, 30, AURAS[randAura].color, 260);
     this.queueFx({ k: "shake", v: 8 });
   }
 
@@ -1196,7 +1205,7 @@ export class Game {
   }
 
   private bossFire(b: Bot, bd: BossDef, dmgMul: number, target: PlayerEnt) {
-    const w = WEAPONS[bd.weapon];
+    const w = WEAPONS[b.weapon]; // используем рандомное оружие босса
     const aim = Math.atan2(target.y - b.y, target.x - b.x);
     const mx = b.x + Math.cos(aim) * (b.r + 16);
     const my = b.y + Math.sin(aim) * (b.r + 16);
@@ -1206,14 +1215,14 @@ export class Game {
       this.bullets.push({
         id: this.bulletId++, x: mx, y: my, px: mx, py: my,
         vx: Math.cos(a) * w.speed * 0.72, vy: Math.sin(a) * w.speed * 0.72,
-        dmg: w.dmg * 0.8 * dmgMul, friendly: false, life: 1.3, kind: bd.weapon, owner: -1,
+        dmg: w.dmg * 0.8 * dmgMul * b.resist, friendly: false, life: 1.3, kind: b.weapon, owner: -1,
         rocket: false, targetId: -1,
       });
     }
     this.flashes.push({ x: mx, y: my, r: 34, t: 0.09, max: 0.09, color: "#ffb020" });
     this.queueFx({ k: "flash", x: mx, y: my, r: 34, color: "#ffb020" });
     const d = Math.hypot(target.x - b.x, target.y - b.y);
-    this.sfx(`shot${bd.weapon}`, d);
+    this.sfx(`shot${b.weapon}`, d);
   }
 
   /* ---------------- damage / fx ---------------- */
@@ -2033,7 +2042,7 @@ export class Game {
       const isBoss = b.kind === 3;
       const def = isBoss ? null : BOTS[b.kind];
       const bd = isBoss ? BOSSES[b.boss] : null;
-      const speed = (isBoss ? bd!.speed : def!.speed) * spdMul * (b.slow > 0 ? 0.7 : 1);
+      const speed = (isBoss ? bd!.speed * b.speedMul : def!.speed) * spdMul * (b.slow > 0 ? 0.7 : 1);
       const sight = isBoss ? 900 : def!.sight;
       const range = isBoss ? 560 : def!.range;
 

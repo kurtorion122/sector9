@@ -1,5 +1,4 @@
-node_modules/
-.next/
-dist/
-build/
-*.log
+```typescript
+// No build artifacts, dependencies, or temp files detected in changes
+// Only source files (.ts) were modified
+```
