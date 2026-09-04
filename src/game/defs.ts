@@ -22,8 +22,8 @@ export interface WeaponDef {
 }
 
 export const WEAPONS: WeaponDef[] = [
-  { name: "ПМ «ГРОМ»", dmg: 28, rate: 0.18, speed: 980, spread: 0.09, pellets: 1, magSize: 12, reload: 0.9, cap: 999999, startReserve: 999999, kick: 5, len: 16, range: 900 },
-  { name: "«ВЕПРЬ-12»", dmg: 11, rate: 0.65, speed: 800, spread: 0.42, pellets: 9, magSize: 8, reload: 2.1, cap: 40, startReserve: 16, kick: 11, len: 22, range: 550 },
+  { name: "ПМ «ГРОМ»", dmg: 22, rate: 0.36, speed: 980, spread: 0.09, pellets: 1, magSize: 12, reload: 0.9, cap: 999999, startReserve: 999999, kick: 5, len: 16, range: 900 },
+  { name: "«ВЕПРЬ-12»", dmg: 11, rate: 0.65, speed: 800, spread: 0.14, pellets: 9, magSize: 8, reload: 2.1, cap: 40, startReserve: 16, kick: 11, len: 22, range: 275 },
   { name: "«ШКВАЛ»", dmg: 15, rate: 0.09, speed: 1050, spread: 0.12, pellets: 1, magSize: 40, reload: 1.7, cap: 120, startReserve: 60, kick: 2.8, len: 20, range: 950 },
   { name: "«ФИЛИН»", dmg: 68, rate: 0.75, speed: 1600, spread: 0.018, pellets: 1, magSize: 6, reload: 1.9, cap: 30, startReserve: 12, kick: 8, len: 26, range: 1300 },
 ];
