@@ -1,6 +1,7 @@
 /* Shared types & static data for engine, net, UI. */
 
 import type { StatBuffId } from "./buffs";
+import type { UbId } from "./underbarrel";
 
 /* ---------------- weapons ---------------- */
 
