@@ -181,14 +181,14 @@ export function drawBuffGlyph(ctx: CanvasRenderingContext2D, id: StatBuffId, col
       ctx.moveTo(-4, -3); ctx.lineTo(-2, 3); ctx.lineTo(0, -3);
       ctx.moveTo(0, -3); ctx.lineTo(2, 3); ctx.lineTo(4, -3);
       break;
-    case \"crit\": // звезда
+    case "crit": // звезда
       for (let i = 0; i < 4; i++) {
         const a = (i / 4) * Math.PI * 2;
         ctx.moveTo(0, 0);
         ctx.lineTo(Math.cos(a) * 5, Math.sin(a) * 5);
       }
       break;
-    case \"reload\": // магазин вниз
+    case "reload": // магазин вниз
       ctx.moveTo(-3, -4); ctx.lineTo(3, -4);
       ctx.lineTo(3, 2); ctx.lineTo(0, 5); ctx.lineTo(-3, 2);
       ctx.closePath();
