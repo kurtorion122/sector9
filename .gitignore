@@ -20,17 +20,27 @@ node_modules/
 # Editors
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # Logs and temp files
 *.log
 *.tmp
 *.swp
 
-# Python
+# Python (if applicable)
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# Temporary files
+*.tmp
+*.temp
+
+# OS specific
+.DS_Store
+Thumbs.db
 
 # Coverage
 coverage/
@@ -38,10 +48,14 @@ htmlcov/
 .coverage
 
 # Testing
-.pytest_cache/
 .mypy_cache/
+.pytest_cache/
 
-# OS
-.DS_Store
-Thumbs.db
+# Gradle (if applicable)
+.gradle/
+target/
+
+# Virtual environments
+.venv/
+venv/
 ```
