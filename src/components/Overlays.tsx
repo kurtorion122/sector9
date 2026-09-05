@@ -64,7 +64,7 @@ export function Hud({
     slots: [0, 1, 2, 3].map((i) => ({ name: "", mag: 0, reserve: 0, cap: -1, reload: -1, owned: i === 0, infinite: i === 0, upgraded: false, prog: 0 })),
     dash: 1, time: 0,
     buffs: [], foeMods: { hp: 1, dmg: 1, spd: 1 }, still: 0, boss: null, players: [], meDead: false, netMode: "solo",
-    stats: [], ubs: [], ubIdx: 0,
+    stats: [], ubs: [], ubIdx: 0, pauseTimer: 0,
   };
   const visible = (phase === "playing" || phase === "paused") && hudIn !== null;
   const lowHp = hud.hp < 32;
@@ -199,6 +199,11 @@ export function Hud({
             <span className="text-[#ff3b30]"><IconSkull /></span>
             {hud.left}
           </div>
+          {hud.pauseTimer > 0 && (
+            <div className="panel px-3 py-1 font-display text-xs tracking-widest text-[#5fd8d0] animate-pulse">
+              СМЕНА ЧЕРЕЗ {Math.ceil(hud.pauseTimer)}
+            </div>
+          )}
         </div>
       </div>
 
