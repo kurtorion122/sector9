@@ -1,11 +1,16 @@
 ```
-# Dependencies
-node_modules/
-
 # Build artifacts
 dist/
 build/
-*.js.map
+
+# Compiled files
+*.css
+*.js
+*.woff
+*.woff2
+
+# Dependencies
+node_modules/
 
 # Environment
 .env
@@ -18,8 +23,10 @@ build/
 *.swp
 *.swo
 
-# Logs
+# Logs and temp files
 *.log
+*.tmp
+*.swp
 
 # Python (if applicable)
 __pycache__/
