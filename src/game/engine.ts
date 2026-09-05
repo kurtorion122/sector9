@@ -62,6 +62,8 @@ interface PlayerEnt {
   dashCool: number; lastHurt: number; hurtFx: number;
   buffs: Record<BuffKind, number>;
   stillT: number; stillAcc: number; prevX: number; prevY: number;
+  darkT: number; // дебаф МРАК
+  revive: boolean; // флаг БАТАРЕЙКИ для возрождения
   sprayT: number; sprayCool: number;
   fireHeld: boolean; reloadSeqSeen: number;
   // пассивные коллектиблы и подстволы
@@ -521,6 +523,7 @@ export class Game {
       dashCool: 0, lastHurt: -99, hurtFx: 0,
       buffs: { firerate: 0, precision: 0, swift: 0, invuln: 0 },
       stillT: 0, stillAcc: 0, prevX: 0, prevY: 0,
+      darkT: 0, revive: false,
       sprayT: 0, sprayCool: 0,
       fireHeld: false, reloadSeqSeen: 0,
       stacks: emptyStacks(), stats: computeStats(emptyStacks()),
@@ -1437,12 +1440,22 @@ export class Game {
     ent.vy += Math.sin(a) * 120;
     if (ent.hp <= 0) {
       ent.hp = 0;
-      ent.dead = true;
-      this.burst(ent.x, ent.y, 34, PLAYER_COLORS[ent.colorIdx], 300);
-      this.flashes.push({ x: ent.x, y: ent.y, r: 80, t: 0.4, max: 0.4, color: PLAYER_COLORS[ent.colorIdx] });
-      this.queueFx({ k: "burst", x: ent.x, y: ent.y, n: 34, color: PLAYER_COLORS[ent.colorIdx], speed: 300 });
-      this.queueFx({ k: "snd", id: "boom", dist: 0 });
-      if (this.players.every((p) => p.dead)) this.gameOver();
+      // проверка БАТАРЕЙКИ для возрождения
+      if (ent.revive && !ent.isRemote) {
+        ent.revive = false;
+        ent.dead = false;
+        ent.hp = Math.floor(ent.stats.maxHp * 0.5); // 50% HP
+        this.floaters.push({ x: ent.x, y: ent.y - 40, txt: "ВОЗРОЖДЕНИЕ!", color: "#ffb020", t: 1.5, max: 1.5, size: 16 });
+        this.queueFx({ k: "float", x: ent.x, y: ent.y - 40, txt: "ВОЗРОЖДЕНИЕ!", color: "#ffb020", size: 16 });
+        this.sfxIfMe(ent, "buff");
+      } else {
+        ent.dead = true;
+        this.burst(ent.x, ent.y, 34, PLAYER_COLORS[ent.colorIdx], 300);
+        this.flashes.push({ x: ent.x, y: ent.y, r: 80, t: 0.4, max: 0.4, color: PLAYER_COLORS[ent.colorIdx] });
+        this.queueFx({ k: "burst", x: ent.x, y: ent.y, n: 34, color: PLAYER_COLORS[ent.colorIdx], speed: 300 });
+        this.queueFx({ k: "snd", id: "boom", dist: 0 });
+        if (this.players.every((p) => p.dead)) this.gameOver();
+      }
     }
     this.pushHud();
   }
@@ -1462,6 +1475,16 @@ export class Game {
       ent.stillT = DEBUFFS.still.dur;
       this.floaters.push({ x: ent.x, y: ent.y - 26, txt: DEBUFFS.still.name, color: DEBUFFS.still.color, t: 1, max: 1, size: 15 });
       this.queueFx({ k: "float", x: ent.x, y: ent.y - 26, txt: DEBUFFS.still.name, color: DEBUFFS.still.color, size: 15 });
+    } else if (kind === "dark") {
+      // МРАК: сужает обзор, мигает, скрывает UI на 10 сек
+      ent.darkT = DEBUFFS.dark.dur;
+      this.floaters.push({ x: ent.x, y: ent.y - 26, txt: DEBUFFS.dark.name, color: DEBUFFS.dark.color, t: 1, max: 1, size: 15 });
+      this.queueFx({ k: "float", x: ent.x, y: ent.y - 26, txt: DEBUFFS.dark.name, color: DEBUFFS.dark.color, size: 15 });
+    } else if (kind === "spawn") {
+      // ПОДКРЕПЛЕНИЕ: спавн 10 врагов за 5 секунд
+      this.spawnReinforcement(10);
+      this.floaters.push({ x: ent.x, y: ent.y - 26, txt: DEBUFFS.spawn.name, color: DEBUFFS.spawn.color, t: 1, max: 1, size: 15 });
+      this.queueFx({ k: "float", x: ent.x, y: ent.y - 26, txt: DEBUFFS.spawn.name, color: DEBUFFS.spawn.color, size: 15 });
     } else {
       const key = kind === "foeHp" ? "hp" : kind === "foeDmg" ? "dmg" : "spd";
       this.foeModT[key] = DEBUFFS[kind].dur;
@@ -1532,15 +1555,23 @@ export class Game {
         break;
       }
       case 6: {
-        // surprise crate: 50% buff, 50% debuff
+        // surprise crate: 50% buff, 50% debuff (включая новые МРАК и ПОДКРЕПЛЕНИЕ)
         this.sfxIfMe(ent, "surprise");
         if (Math.random() < 0.5) {
           const bk = BUFF_KINDS[(Math.random() * BUFF_KINDS.length) | 0];
           this.addBuff(ent, bk);
         } else {
-          const dk = (["foeHp", "foeDmg", "foeSpd", "still"] as DebuffKind[])[(Math.random() * 4) | 0];
+          // теперь включаем dark и spawn в пул дебаффов
+          const dk = DEBUFF_KINDS[(Math.random() * DEBUFF_KINDS.length) | 0];
           this.addDebuff(dk, ent);
         }
+        break;
+      }
+      case 11: {
+        // БАТАРЕЙКА - возрождение после смерти
+        ent.revive = true;
+        this.floaters.push({ x: pk.x, y: pk.y - 14, txt: "БАТАРЕЙКА", color: "#ffb020", t: 1.4, max: 1.4, size: 15 });
+        this.sfxIfMe(ent, "pickup");
         break;
       }
       case 7:

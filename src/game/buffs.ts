@@ -23,8 +23,8 @@ export interface StatBuffDef {
 
 export const STAT_BUFFS: StatBuffDef[] = [
   { id: "dmg",   name: "УРОН",           short: "УРН", rarity: 0, baseChance: 0.12, minWave: 1,  cap: 999 },
-  { id: "rate",  name: "СКОРОСТРЕЛЬНОСТЬ", short: "ТМП", rarity: 0, baseChance: 0.12, minWave: 1,  cap: 200 },
-  { id: "hp",    name: "ЖИВУЧЕСТЬ",      short: "ЖВЧ", rarity: 1, baseChance: 0.05, minWave: 1,  cap: 999 },
+  { id: "rate",  name: "СКОРОСТРЕЛЬНОСТЬ", short: "ТМП", rarity: 0, baseChance: 0.12, minWave: 1,  cap: 200 }, // кап 100% (+0.5% за стек)
+  { id: "hp",    name: "ЖИВУЧЕСТЬ",      short: "ЖВЧ", rarity: 1, baseChance: 0.05, minWave: 1,  cap: 50 }, // кап +100 HP (2 * 50)
   { id: "spd",   name: "СКОРОСТЬ",       short: "СКР", rarity: 1, baseChance: 0.05, minWave: 1,  cap: 20 },
   { id: "acc",   name: "ТОЧНОСТЬ",       short: "ТЧН", rarity: 2, baseChance: 0.02, minWave: 1,  cap: 25 },
   { id: "aura",  name: "АУРА ГОРЕНИЯ",   short: "АУР", rarity: 2, baseChance: 0.02, minWave: 1,  cap: 999 },
