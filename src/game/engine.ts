@@ -281,7 +281,18 @@ export class Game {
     ent.y = clamp(m.y, ent.r, MAP_H - ent.r);
     ent.aim = m.aim;
     ent.fireHeld = m.fire;
-    if (m.weapon !== ent.wi && ent.owned[m.weapon]) this.switchWeaponEnt(ent, m.weapon);
+    // allow weapon switch on direct request (client sends weapon index explicitly)
+    if (m.weapon !== ent.wi && ent.owned[m.weapon]) {
+      // bypass cooldown for network requests
+      if (ent.switchCool <= 0 || ent !== this.me) {
+        ent.wi = m.weapon;
+        ent.reloadT = -1;
+        ent.fireCool = Math.max(ent.fireCool, 0.12);
+        ent.switchCool = 0.16;
+        if (ent === this.me) this.sfx("click");
+        this.pushHud();
+      }
+    }
     if (m.reloadSeq > ent.reloadSeqSeen) {
       ent.reloadSeqSeen = m.reloadSeq;
       this.startReloadEnt(ent);
@@ -687,8 +698,8 @@ export class Game {
     this.waveActive = true;
     this.sfx("wave");
 
-    // map rotation every 3 waves
-    if (n > 1 && (n - 1) % 3 === 0) this.rotateMap();
+    // map rotation after boss wave (every 3 waves, after the boss is defeated)
+    // actual rotation happens in the completion handler below
 
     const isBossWave = n % 3 === 0;
     const players = Math.max(1, this.players.length);
@@ -718,7 +729,7 @@ export class Game {
       this.pending.push({ x: p.x, y: p.y, t: 0.5 + i * 0.22, kind: k, boss: -1 });
     });
     if (isBossWave) {
-      const bossIdx = Math.floor((n / 3) - 1);
+      const bossIdx = ((Math.floor(n / 3) - 1) % BOSSES.length + BOSSES.length) % BOSSES.length;
       const p = this.findSpawnPoint();
       this.pending.push({ x: p.x, y: p.y, t: 1.4, kind: 3, boss: bossIdx });
       const bd = BOSSES[bossIdx];
@@ -831,6 +842,14 @@ export class Game {
     ent.fireCool = Math.max(ent.fireCool, 0.12);
     ent.switchCool = 0.16;
     if (ent === this.me) this.sfx("click");
+    // send weapon switch to host for remote players in client mode
+    if (this.netMode === "client" && this.netClient) {
+      this.netClient.send({
+        t: "in", x: ent.x, y: ent.y, aim: ent.aim,
+        fire: this.mouse.down && !ent.dead, weapon: idx, reloadSeq: ent.reloadSeqSeen,
+        ub: ent.ubIdx, rmb: ent.rmbSeq,
+      });
+    }
     this.pushHud();
   }
 
@@ -1744,6 +1763,10 @@ export class Game {
       for (const ent of this.players) for (let i = 1; i < 4; i++) if (ent.owned[i]) ent.reserves[i] = Math.min(WEAPONS[i].cap, ent.reserves[i] + Math.round(WEAPONS[i].cap * 0.15));
       this.cbs.onBanner("СЕКТОР ЗАЧИЩЕН", `бонус +${bonus} · аптечка и патроны пополнены`);
       this.sfx("pickup");
+      
+      // rotate map after boss wave
+      if (this.wave % 3 === 0) this.rotateMap();
+      
       this.betweenT = 3.2;
       this.pushHud();
     }
@@ -1826,6 +1849,18 @@ export class Game {
         fire: this.mouse.down && !this.me.dead, weapon: this.me.wi, reloadSeq: this.me.reloadSeqSeen,
         ub: this.me.ubIdx, rmb: this.me.rmbSeq,
       });
+      // also send weapon switch request immediately when keys pressed
+      for (let i = 0; i < 4; i++) {
+        const code = `Digit${i + 1}` as any;
+        if (this.keys.has(code) && this.me.owned[i] && this.me.wi !== i) {
+          this.switchWeaponEnt(this.me, i);
+          this.netClient.send({
+            t: "in", x: this.me.x, y: this.me.y, aim: this.me.aim,
+            fire: this.mouse.down && !this.me.dead, weapon: i, reloadSeq: this.me.reloadSeqSeen,
+            ub: this.me.ubIdx, rmb: this.me.rmbSeq,
+          });
+        }
+      }
     }
 
     this.applySnapshot();
@@ -2000,6 +2035,7 @@ export class Game {
         seenX: Math.round(b.seenX), seenY: Math.round(b.seenY),
         burn: b.burn > 0, slow: b.slow > 0,
         auraMul: Math.round(b.auraMul * 100) / 100,
+        weapon: b.weapon ?? 0, speedMul: b.speedMul ?? 1, resist: b.resist ?? 1,
       })),
       bullets: this.bullets.map((bl) => ({
         id: bl.id, x: Math.round(bl.x), y: Math.round(bl.y), px: Math.round(bl.px), py: Math.round(bl.py),
@@ -3113,6 +3149,16 @@ export class Game {
         ctx.fillText(P.name.slice(0, 12), P.x, P.y - P.r - 12);
         ctx.globalAlpha = 1;
       }
+
+      // weapon indicator under player with color
+      ctx.font = "bold 11px 'Russo One', sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillStyle = w.color;
+      ctx.shadowColor = w.color;
+      ctx.shadowBlur = 6;
+      ctx.fillText(w.name.split(" ")[0].replace(/[«»]/g, ""), P.x, P.y + P.r + 14);
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
 
       // reload ring
       if (P.reloadT >= 0) {

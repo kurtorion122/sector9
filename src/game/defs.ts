@@ -19,13 +19,14 @@ export interface WeaponDef {
   kick: number;
   len: number;
   range: number; // bullet life = range / speed
+  color: string; // color for UI display
 }
 
 export const WEAPONS: WeaponDef[] = [
-  { name: "ПМ «ГРОМ»", dmg: 22, rate: 0.36, speed: 980, spread: 0.09, pellets: 1, magSize: 12, reload: 0.9, cap: 999999, startReserve: 999999, kick: 5, len: 16, range: 900 },
-  { name: "«ВЕПРЬ-12»", dmg: 11, rate: 0.65, speed: 800, spread: 0.14, pellets: 9, magSize: 8, reload: 2.1, cap: 40, startReserve: 16, kick: 11, len: 22, range: 275 },
-  { name: "«ШКВАЛ»", dmg: 15, rate: 0.09, speed: 1050, spread: 0.12, pellets: 1, magSize: 40, reload: 1.7, cap: 120, startReserve: 60, kick: 2.8, len: 20, range: 950 },
-  { name: "«ФИЛИН»", dmg: 68, rate: 0.75, speed: 1600, spread: 0.018, pellets: 1, magSize: 6, reload: 1.9, cap: 30, startReserve: 12, kick: 8, len: 26, range: 1300 },
+  { name: "ПМ «ГРОМ»", dmg: 22, rate: 0.432, speed: 980, spread: 0.09, pellets: 1, magSize: 12, reload: 0.9, cap: 999999, startReserve: 999999, kick: 5, len: 16, range: 900, color: "#a8ff3e" },
+  { name: "«ВЕПРЬ-12»", dmg: 11, rate: 0.65, speed: 800, spread: 0.112, pellets: 9, magSize: 8, reload: 2.1, cap: 40, startReserve: 16, kick: 11, len: 22, range: 275, color: "#ff6a2e" },
+  { name: "«ШКВАЛ»", dmg: 15, rate: 0.09, speed: 1050, spread: 0.12, pellets: 1, magSize: 40, reload: 1.7, cap: 120, startReserve: 60, kick: 2.8, len: 20, range: 950, color: "#5fd8d0" },
+  { name: "«ФИЛИН»", dmg: 68, rate: 0.75, speed: 1600, spread: 0.018, pellets: 1, magSize: 6, reload: 1.9, cap: 30, startReserve: 12, kick: 8, len: 26, range: 1300, color: "#ffb020" },
 ];
 
 export interface UpgradeDef { label: string; desc: string; }
@@ -140,6 +141,7 @@ export interface BotSnap {
   seenX: number; seenY: number;
   burn: boolean; slow: boolean;
   auraMul: number;
+  weapon: number; speedMul: number; resist: number;
 }
 
 export interface BulletSnap {

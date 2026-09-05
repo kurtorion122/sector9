@@ -67,7 +67,7 @@ export function Lobby({ onBack, onBegin }: { onBack: () => void; onBegin: (b: Be
     netRef.current?.send({ t: "create", name: name.trim() || "БОЕЦ" });
   };
   const doJoin = () => {
-    if (joinCode.trim().length < 4) { setError("Введите код из 4 символов"); return; }
+    if (!/^\d{4}$/.test(joinCode.trim())) { setError("Введите 4 цифры"); return; }
     setError(null);
     netRef.current?.send({ t: "join", code: joinCode.trim(), name: name.trim() || "БОЕЦ" });
   };
@@ -130,8 +130,14 @@ export function Lobby({ onBack, onBegin }: { onBack: () => void; onBegin: (b: Be
                 <div className="flex gap-3">
                   <input
                     value={joinCode}
-                    onChange={(e) => setJoinCode(e.target.value.toUpperCase().slice(0, 4))}
-                    placeholder="КОД"
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+                      setJoinCode(v);
+                    }}
+                    placeholder="0000"
+                    inputMode="numeric"
+                    pattern="\d*"
+                    maxLength={4}
                     className="flex-1 bg-black/60 border border-[#2c4033] focus:border-[#ffb020] outline-none px-4 py-3.5 font-display text-xl text-[#ffb020] tracking-[0.5em] text-center transition-colors"
                   />
                   <button
