@@ -1,6 +1,10 @@
-```
+```gitignore
 # Dependencies
 node_modules/
+.pnpm-store/
+.yarn/
+yarn.lock
+package-lock.json
 
 # Build outputs
 dist/
