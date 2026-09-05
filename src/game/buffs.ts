@@ -5,7 +5,7 @@
  * ------------------------------------------------------------------ */
 
 export type StatBuffId =
-  | "dmg" | "rate" | "hp" | "spd" | "acc" | "aura" | "chain" | "vamp" | "crit";
+  | "dmg" | "rate" | "hp" | "spd" | "acc" | "aura" | "chain" | "vamp" | "crit" | "reload";
 
 /** белый → зелёный → синий → фиолетовый → оранжевый */
 export type Rarity = 0 | 1 | 2 | 3 | 4;
@@ -23,7 +23,7 @@ export interface StatBuffDef {
 
 export const STAT_BUFFS: StatBuffDef[] = [
   { id: "dmg",   name: "УРОН",           short: "УРН", rarity: 0, baseChance: 0.12, minWave: 1,  cap: 999 },
-  { id: "rate",  name: "СКОРОСТРЕЛЬНОСТЬ", short: "ТМП", rarity: 0, baseChance: 0.12, minWave: 1,  cap: 999 },
+  { id: "rate",  name: "СКОРОСТРЕЛЬНОСТЬ", short: "ТМП", rarity: 0, baseChance: 0.12, minWave: 1,  cap: 200 },
   { id: "hp",    name: "ЖИВУЧЕСТЬ",      short: "ЖВЧ", rarity: 1, baseChance: 0.05, minWave: 1,  cap: 999 },
   { id: "spd",   name: "СКОРОСТЬ",       short: "СКР", rarity: 1, baseChance: 0.05, minWave: 1,  cap: 20 },
   { id: "acc",   name: "ТОЧНОСТЬ",       short: "ТЧН", rarity: 2, baseChance: 0.02, minWave: 1,  cap: 25 },
@@ -31,6 +31,7 @@ export const STAT_BUFFS: StatBuffDef[] = [
   { id: "chain", name: "ЦЕПНАЯ МОЛНИЯ",  short: "МЛН", rarity: 3, baseChance: 0.01, minWave: 6,  cap: 5 },
   { id: "vamp",  name: "ВАМПИРИЗМ",      short: "ВМП", rarity: 3, baseChance: 0.01, minWave: 10, cap: 5 },
   { id: "crit",  name: "КРИТ",           short: "КРТ", rarity: 3, baseChance: 0.02, minWave: 1,  cap: 8 },
+  { id: "reload", name: "ПЕРЕЗАРЯДКА",    short: "ПРЗ", rarity: 1, baseChance: 0.04, minWave: 1,  cap: 35 },
 ];
 
 export function buffDef(id: StatBuffId): StatBuffDef {
@@ -38,14 +39,14 @@ export function buffDef(id: StatBuffId): StatBuffDef {
 }
 
 export function emptyStacks(): Record<StatBuffId, number> {
-  return { dmg: 0, rate: 0, hp: 0, spd: 0, acc: 0, aura: 0, chain: 0, vamp: 0, crit: 0 };
+  return { dmg: 0, rate: 0, hp: 0, spd: 0, acc: 0, aura: 0, chain: 0, vamp: 0, crit: 0, reload: 0 };
 }
 
 /* ---------------- производные характеристики ---------------- */
 
 export interface DerivedStats {
   dmgMul: number;     // ×(1 + 2%·n)
-  rateMul: number;    // ×(1 + 3%·n) — делит интервал между выстрелами
+  rateMul: number;    // ×(1 + 3%·n) — делит интервал между выстрелами, кап 100%
   maxHp: number;      // 100 + 2·n
   spdMul: number;     // ×(1 + 1%·n), кап 20%
   accMul: number;     // ×(1 − 2%·n) — множитель разброса, кап 50%
@@ -54,13 +55,14 @@ export interface DerivedStats {
   vamp: number;       // HP за убийство, кап 5
   chain: { jumps: number; chance: number; dmg: number };
   auraR: number;      // 0 = аура не открыта
+  reloadMul: number;  // ×(1 - 1%·n), кап 35%
 }
 
 export function computeStats(s: Record<StatBuffId, number>): DerivedStats {
   const chainN = Math.min(s.chain, 5);
   return {
     dmgMul: 1 + 0.02 * s.dmg,
-    rateMul: 1 + 0.03 * s.rate,
+    rateMul: 1 + 0.005 * Math.min(s.rate, 200), // кап 100% (+0.5% за стек, макс 200 стеков)
     maxHp: 100 + 2 * s.hp,
     spdMul: 1 + 0.01 * Math.min(s.spd, 20),
     accMul: 1 - 0.02 * Math.min(s.acc, 25),
@@ -73,6 +75,7 @@ export function computeStats(s: Record<StatBuffId, number>): DerivedStats {
       dmg: chainN > 0 ? Math.min(0.5 + 0.1 * (s.chain - 1), 1.0) : 0,
     },
     auraR: s.aura > 0 ? 60 * Math.pow(1.15, s.aura - 1) : 0,
+    reloadMul: 1 - 0.01 * Math.min(s.reload, 35), // кап 35% (-1% за стек)
   };
 }
 
@@ -116,10 +119,11 @@ export function rollBuffDrops(
 export function buffDescribe(id: StatBuffId, n: number): string {
   switch (id) {
     case "dmg": return `+${2 * n}% урона`;
-    case "rate": return `+${3 * n}% темп`;
+    case "rate": return `+${0.5 * n}% темп`;
     case "hp": return `+${2 * n} макс. HP`;
     case "spd": return `${n}% / 20%`;
     case "acc": return `${2 * n}% / 50%`;
+    case "reload": return `-${n}% перезарядка`;
     case "aura": return `радиус ${Math.round(60 * Math.pow(1.15, n - 1))}`;
     case "chain": {
       const jumps = Math.min(n, 5);
@@ -177,12 +181,19 @@ export function drawBuffGlyph(ctx: CanvasRenderingContext2D, id: StatBuffId, col
       ctx.moveTo(-4, -3); ctx.lineTo(-2, 3); ctx.lineTo(0, -3);
       ctx.moveTo(0, -3); ctx.lineTo(2, 3); ctx.lineTo(4, -3);
       break;
-    case "crit": // звезда
+    case \"crit\": // звезда
       for (let i = 0; i < 4; i++) {
         const a = (i / 4) * Math.PI * 2;
         ctx.moveTo(0, 0);
         ctx.lineTo(Math.cos(a) * 5, Math.sin(a) * 5);
       }
+      break;
+    case \"reload\": // магазин вниз
+      ctx.moveTo(-3, -4); ctx.lineTo(3, -4);
+      ctx.lineTo(3, 2); ctx.lineTo(0, 5); ctx.lineTo(-3, 2);
+      ctx.closePath();
+      ctx.moveTo(-1, 0); ctx.lineTo(1, 0);
+      ctx.moveTo(0, -2); ctx.lineTo(0, 3);
       break;
   }
   ctx.stroke();
