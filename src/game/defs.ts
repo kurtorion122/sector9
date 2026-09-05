@@ -23,48 +23,10 @@ export interface WeaponDef {
 }
 
 export const WEAPONS: WeaponDef[] = [
-  // Пистолет ПМ «ГРОМ»: магазин 16, бесконечный боезапас
-  { name: "ПМ «ГРОМ»", dmg: 22, rate: 0.432, speed: 980, spread: 0.09, pellets: 1, magSize: 16, reload: 0.9, cap: 999999, startReserve: 999999, kick: 5, len: 16, range: 900, color: "#a8ff3e" },
-  // Дробовик «ВЕПРЬ-12»: магазин 10, боезапас 40
-  { name: "«ВЕПРЬ-12»", dmg: 11, rate: 0.65, speed: 800, spread: 0.112, pellets: 9, magSize: 10, reload: 2.1, cap: 40, startReserve: 40, kick: 11, len: 22, range: 1100, color: "#ff6a2e" },
-  // Автомат «ШКВАЛ»: магазин 50, боезапас 300
-  { name: "«ШКВАЛ»", dmg: 15, rate: 0.09, speed: 1050, spread: 0.12, pellets: 1, magSize: 50, reload: 1.7, cap: 300, startReserve: 300, kick: 2.8, len: 20, range: 950, color: "#5fd8d0" },
-  // Винтовка «ФИЛИН»: магазин 5, боезапас 50
-  { name: "«ФИЛИН»", dmg: 68, rate: 0.75, speed: 1600, spread: 0.018, pellets: 1, magSize: 5, reload: 1.9, cap: 50, startReserve: 50, kick: 8, len: 26, range: 1300, color: "#ffb020" },
-];
-
-// Уровни улучшений для каждого оружия (последовательные)
-export interface WeaponUpgradeTier {
-  label: string;
-  desc: string;
-  apply: (w: WeaponDef) => Partial<WeaponDef>;
-}
-
-export const WEAPON_UPGRADES: WeaponUpgradeTier[][] = [
-  // Пистолет (индекс 0)
-  [
-    { label: "МАГАЗИН+", desc: "Увеличивает магазин до 20 патронов", apply: () => ({ magSize: 20 }) },
-    { label: "СТВОЛ+", desc: "Увеличивает точность на 50%", apply: (w) => ({ spread: w.spread * 0.5 }) },
-    { label: "УСМ+", desc: "Стрельба очередями по 3 патрона", apply: () => ({ pellets: 3 }) },
-  ],
-  // Дробовик (индекс 1)
-  [
-    { label: "ЧОК", desc: "Увеличивает точность на 30%", apply: (w) => ({ spread: w.spread * 0.7 }) },
-    { label: "СТВОЛ+", desc: "Увеличивает дальность на 50%", apply: (w) => ({ range: w.range * 1.5 }) },
-    { label: "МАГАЗИН+", desc: "Магазин 15, боезапас 60", apply: () => ({ magSize: 15 }) },
-  ],
-  // Автомат (индекс 2)
-  [
-    { label: "ПРИЦЕЛ", desc: "Увеличивает точность на 50%", apply: (w) => ({ spread: w.spread * 0.5 }) },
-    { label: "МАГАЗИН+", desc: "Увеличивает магазин до 75 патронов", apply: () => ({ magSize: 75 }) },
-    { label: "УСМ+", desc: "Увеличивает скорострельность на 75%", apply: (w) => ({ rate: w.rate / 1.75 }) },
-  ],
-  // Винтовка (индекс 3)
-  [
-    { label: "ЛАЗЕР", desc: "Добавляет лазерный указатель", apply: () => ({}) }, // визуальный эффект
-    { label: "КАЛИБР+", desc: "Увеличивает урон на 100%", apply: (w) => ({ dmg: w.dmg * 2 }) },
-    { label: "НАСТИЛЬНОСТЬ", desc: "Увеличивает скорость пули на 100%", apply: (w) => ({ speed: w.speed * 2 }) },
-  ],
+  { name: "ПМ «ГРОМ»", dmg: 22, rate: 0.432, speed: 980, spread: 0.09, pellets: 1, magSize: 36, reload: 0.9, cap: 999999, startReserve: 999999, kick: 5, len: 16, range: 900, color: "#a8ff3e" },
+  { name: "«ВЕПРЬ-12»", dmg: 11, rate: 0.65, speed: 800, spread: 0.112, pellets: 9, magSize: 24, reload: 2.1, cap: 120, startReserve: 48, kick: 11, len: 22, range: 550, color: "#ff6a2e" },
+  { name: "«ШКВАЛ»", dmg: 15, rate: 0.09, speed: 1050, spread: 0.12, pellets: 1, magSize: 120, reload: 1.7, cap: 360, startReserve: 180, kick: 2.8, len: 20, range: 950, color: "#5fd8d0" },
+  { name: "«ФИЛИН»", dmg: 68, rate: 0.75, speed: 1600, spread: 0.018, pellets: 1, magSize: 18, reload: 1.9, cap: 90, startReserve: 36, kick: 8, len: 26, range: 1300, color: "#ffb020" },
 ];
 
 export interface UpgradeDef { label: string; desc: string; }
@@ -138,24 +100,22 @@ export const BUFFS: Record<BuffKind, BuffDef> = {
 };
 export const BUFF_KINDS: BuffKind[] = ["firerate", "precision", "swift", "invuln"];
 
-export type DebuffKind = "foeHp" | "foeDmg" | "foeSpd" | "still" | "dark" | "spawn";
+export type DebuffKind = "foeHp" | "foeDmg" | "foeSpd" | "still";
 export interface DebuffDef { name: string; dur: number; color: string; }
 export const DEBUFFS: Record<DebuffKind, DebuffDef> = {
   foeHp: { name: "ВРАГИ КРЕПЧЕ", dur: 14, color: "#ff5040" },
   foeDmg: { name: "ВРАГИ ЗЛЕЕ", dur: 12, color: "#ff6a2e" },
   foeSpd: { name: "ВРАГИ БЫСТРЕЕ", dur: 12, color: "#ff2e5f" },
   still: { name: "НЕ СТОЙ!", dur: 10, color: "#e8c834" },
-  dark: { name: "МРАК", dur: 10, color: "#1a1a1a" }, // сужает обзор, мигает, скрывает UI
-  spawn: { name: "ПОДКРЕПЛЕНИЕ", dur: 5, color: "#ff0000" }, // спавнит 10 врагов
 };
-export const DEBUFF_KINDS: DebuffKind[] = ["foeHp", "foeDmg", "foeSpd", "still", "dark", "spawn"];
+export const DEBUFF_KINDS: DebuffKind[] = ["foeHp", "foeDmg", "foeSpd", "still"];
 
 /* ---------------- pickups ---------------- */
 
 /** 0 medkit · 1 ammo · 2 weapon crate · 3 armor · 4 timed buff · 5 upgrade kit
  *  6 surprise crate · 7 spray bonus · 8 rocket bonus
- *  9 passive stat buff (buff=StatBuffId) · 10 underbarrel (ub=UbId) · 11 battery (revive) */
-export type PickupKind = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
+ *  9 passive stat buff (buff=StatBuffId) · 10 underbarrel (ub=UbId) */
+export type PickupKind = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 
 /* ---------------- players ---------------- */
 
