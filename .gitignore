@@ -1,32 +1,43 @@
-```
+```gitignore
 # Dependencies
 node_modules/
+.pnpm-store/
+.yarn/
+yarn.lock
+package-lock.json
 
-# Build artifacts
+# Build outputs
 dist/
 build/
+.next/
+.nuxt/
+out/
+
+# TypeScript/JavaScript
+*.tsbuildinfo
 *.js.map
+*.ts.map
 
 # Environment
 .env
 .env.local
-*.env.*
-
-# Editors
-.vscode/
-.idea/
+.env.*
+!.env.example
 
 # Logs
 *.log
 
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
+# OS generated files
+.DS_Store
+Thumbs.db
 
-# Temporary files
-*.tmp
+# IDE
+.vscode/
+.idea/
 *.swp
-*~
+*.swo
+
+# Coverage
+coverage/
+.nyc_output/
 ```
