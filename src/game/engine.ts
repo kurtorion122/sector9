@@ -36,6 +36,7 @@ export interface HudData {
   stats: { id: string; name: string; val: string; rarity: number }[];
   ubs: { name: string; short: string; desc: string; owned: boolean; cool: number; active: boolean }[];
   ubIdx: number;
+  pauseTimer: number; // таймер паузы перед сменой карты
 }
 
 interface Callbacks {
@@ -190,6 +191,7 @@ export class Game {
 
   private wave = 0;
   private betweenT = 0;
+  private pauseTimer = 0; // таймер паузы перед сменой карты после босса
   private waveActive = false;
   private supplyT = 0;
   private surpriseT = 0;
@@ -703,7 +705,7 @@ export class Game {
 
     const isBossWave = n % 3 === 0;
     const players = Math.max(1, this.players.length);
-    const budget = Math.round((5 + n * 2.3) * (1 + (players - 1) * 0.6));
+    const budget = Math.round((5 + n * 2.3) * (1 + (players - 1) * 0.6) * 1.5); // увеличено в 1.5 раза
 
     const kinds: number[] = [];
     if (!isBossWave) {
@@ -1752,7 +1754,13 @@ export class Game {
     }
 
     // waves
-    if (!this.waveActive) {
+    if (this.pauseTimer > 0) {
+      this.pauseTimer -= dt;
+      if (this.pauseTimer <= 0) {
+        this.rotateMap();
+        this.betweenT = 3.2;
+      }
+    } else if (!this.waveActive) {
       this.betweenT -= dt;
       if (this.betweenT <= 0) this.startWave(this.wave + 1);
     } else if (this.bots.length === 0 && this.pending.length === 0) {
@@ -1764,10 +1772,13 @@ export class Game {
       this.cbs.onBanner("СЕКТОР ЗАЧИЩЕН", `бонус +${bonus} · аптечка и патроны пополнены`);
       this.sfx("pickup");
       
-      // rotate map after boss wave
-      if (this.wave % 3 === 0) this.rotateMap();
-      
-      this.betweenT = 3.2;
+      // пауза 10 секунд перед сменой карты после босса (каждые 3 уровня)
+      if (this.wave % 3 === 0) {
+        this.pauseTimer = 10;
+        this.cbs.onBanner("ПАУЗА", "смена сектора через 10 секунд");
+      } else {
+        this.betweenT = 3.2;
+      }
       this.pushHud();
     }
 
@@ -3319,6 +3330,7 @@ export class Game {
         active: this.me.ubIdx === u.id,
       })),
       ubIdx: this.me.ubIdx,
+      pauseTimer: Math.max(0, this.pauseTimer),
     });
   }
 }

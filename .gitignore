@@ -15,11 +15,13 @@ build/
 # Editors
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # Logs
 *.log
 
-# Python
+# Python (if applicable)
 __pycache__/
 *.pyc
 *.pyo
@@ -27,6 +29,26 @@ __pycache__/
 
 # Temporary files
 *.tmp
-*.swp
-*~
+*.temp
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Testing
+.mypy_cache/
+.pytest_cache/
+
+# Gradle (if applicable)
+.gradle/
+target/
+
+# Virtual environments
+.venv/
+venv/
 ```
